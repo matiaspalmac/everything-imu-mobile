@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/imu-math",
+    "crates/imu-fusion",
+    "crates/jni-android",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.88"
+authors = ["Matias Palma <matiaspalma2594@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/matiaspalmac/everything-imu-mobile"
+
+[workspace.dependencies]
+nalgebra = "0.34"
+serde = { version = "1.0", features = ["derive"] }
+approx = "0.5"
+proptest = "1.5"
+serde_json = "1.0"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
