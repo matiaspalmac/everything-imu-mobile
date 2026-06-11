@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 
 /** Tabs mirror eimu desktop sidebar (House / Pulse / VibrateIcon / Bug / GearSix from @phosphor-icons/react). */
 enum class EimuTab(
@@ -34,7 +35,7 @@ enum class EimuTab(
     val outlined: ImageVector,
 ) {
     Home("Home", "Inicio", Icons.Filled.Home, Icons.Outlined.Home),
-    Controllers("Controllers", "Mandos", Icons.Filled.SportsEsports, Icons.Outlined.SportsEsports),
+    Controllers("Pads", "Mandos", Icons.Filled.SportsEsports, Icons.Outlined.SportsEsports),
     Calibrate("Calibrate", "Calibrar", Icons.Filled.GraphicEq, Icons.Outlined.GraphicEq),
     Haptics("Haptics", "Vibración", Icons.Filled.Vibration, Icons.Outlined.Vibration),
     Settings("Settings", "Ajustes", Icons.Filled.Settings, Icons.Outlined.Settings),
@@ -83,7 +84,14 @@ private fun EimuBottomNav(
                         contentDescription = labelOf(tab),
                     )
                 },
-                label = { Text(labelOf(tab)) },
+                label = {
+                    Text(
+                        labelOf(tab),
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 alwaysShowLabel = true,
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = EimuPalette.Accent,
