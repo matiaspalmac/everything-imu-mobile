@@ -8,6 +8,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.BatteryManager
+import cl.matiaspalma.everythingimu.core.ble.BleDeviceManager
 import cl.matiaspalma.everythingimu.core.calibration.CalibrationData
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibration
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibrationSession
@@ -148,6 +149,8 @@ object TrackingController {
         // traffic through Wi-Fi, which is needless when idle.
         wifiBinder = WifiBinder(app)
         hapticBridge = HapticBridge(app)
+        bleManager = BleDeviceManager(app) { eimuClient }
+        onControllerRumble = { handle, intensity -> bleManager?.rumble(handle, intensity) }
         val repo = SensorRepository(app)
         sensors = repo
         repo.onGyroBiasUpdated = { bias ->
@@ -359,6 +362,9 @@ object TrackingController {
     }
 
     fun eimuClientOrNull(): EimuClient? = eimuClient
+
+    private var bleManager: BleDeviceManager? = null
+    fun bleManager(): BleDeviceManager? = bleManager
 
     private val mirrorJobs = mutableListOf<Job>()
 
