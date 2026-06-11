@@ -21,7 +21,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -39,8 +38,8 @@ enum class EimuTab(
 }
 
 /**
- * Shell with --body-gradient (apps/ui styles.css) + bottom NavigationBar styled 1:1
- * with eimu desktop nav: warn-soft pill on selected, accent fg, muted fg unselected.
+ * Shell with the ember flat background (apps/ui styles.css) + bottom NavigationBar
+ * styled 1:1 with eimu desktop nav: accent fg selected, muted fg unselected.
  */
 @Composable
 fun EimuShell(
@@ -49,14 +48,7 @@ fun EimuShell(
     labelOf: (EimuTab) -> String,
     content: @Composable (PaddingValues) -> Unit,
 ) {
-    val bodyGradient = Brush.linearGradient(
-        colors = listOf(
-            EimuPalette.BgBase,
-            EimuPalette.BgPanel.copy(alpha = 0.85f),
-            EimuPalette.BgBase,
-        ),
-    )
-    Box(modifier = Modifier.fillMaxSize().background(bodyGradient)) {
+    Box(modifier = Modifier.fillMaxSize().background(EimuPalette.BgBase)) {
         Scaffold(
             containerColor = Color.Transparent,
             contentColor = EimuPalette.FgPrimary,

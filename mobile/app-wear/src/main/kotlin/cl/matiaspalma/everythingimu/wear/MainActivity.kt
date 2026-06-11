@@ -39,6 +39,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
+import androidx.wear.compose.material.Colors
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import cl.matiaspalma.everythingimu.core.net.ConnectionState
@@ -73,9 +74,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Ember accent over the wear-default black background. */
+private val EmberWearColors = Colors(
+    primary = Color(0xFFF7502A),
+    primaryVariant = Color(0xFFCC361E),
+    secondary = Color(0xFFFF7444),
+    secondaryVariant = Color(0xFFCC361E),
+)
+
 @Composable
 private fun WearApp() {
-    MaterialTheme {
+    MaterialTheme(colors = EmberWearColors) {
         val context = LocalContext.current
         val connection by TrackingController.connection.collectAsStateWithLifecycle()
 
@@ -324,9 +333,9 @@ private fun ScreensaverScreen(
         contentAlignment = alignment,
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text(connection.name, color = Color(0xFF2E7D32), style = MaterialTheme.typography.caption2)
+            Text(connection.name, color = Color(0xFF993311), style = MaterialTheme.typography.caption2)
             if (!endpoint.isNullOrBlank()) {
-                Text(endpoint, color = Color(0xFF1B3A1B), style = MaterialTheme.typography.caption2)
+                Text(endpoint, color = Color(0xFF40170A), style = MaterialTheme.typography.caption2)
             }
             Text("back to exit", color = Color(0xFF161616), style = MaterialTheme.typography.caption2)
         }
