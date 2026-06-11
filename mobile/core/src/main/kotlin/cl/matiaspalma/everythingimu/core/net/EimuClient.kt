@@ -147,7 +147,7 @@ class EimuClient(
             val ackAgeMs =
                 if (lastAckNanos == 0L) Long.MAX_VALUE
                 else (System.nanoTime() - lastAckNanos) / 1_000_000
-            if (ackAgeMs < ACK_FRESH_MS) {
+            if (ackAgeMs < ACK_STALE_MS) {
                 _state.value = ConnectionState.Connected
                 misses = 0
                 if (_lastError.value != null) _lastError.value = null
@@ -244,7 +244,11 @@ class EimuClient(
         private const val HELLO_SEARCH_MS = 1_000L
         private const val HELLO_CONNECTED_MS = 3_000L
         private const val ANNOUNCE_EVERY_MS = 2_000L
-        private const val ACK_FRESH_MS = 6_000L
+
+        // Four hello periods of grace before flagging Reconnecting: MIUI's
+        // Wi-Fi power save can hold inbound UDP for seconds with the screen
+        // off, and a single delayed ACK must not flap the connection state.
+        private const val ACK_STALE_MS = 12_000L
 
         /** 16 raw bytes from the persisted UUID string (dashes stripped, hex). */
         fun uuidBytes(uuidHex: String): ByteArray {
