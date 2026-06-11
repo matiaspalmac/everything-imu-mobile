@@ -29,6 +29,12 @@ object EimuProtocol {
     const val KIND_JOYCON2_R = 4
     const val KIND_PRO_CONTROLLER_2 = 5
     const val KIND_HOPX = 6
+    const val KIND_DUALSENSE = 7
+    const val KIND_DUALSHOCK4 = 8
+    const val KIND_JOYCON_L = 9
+    const val KIND_JOYCON_R = 10
+    const val KIND_PRO_CONTROLLER = 11
+    const val KIND_GAMEPAD = 12
 
     const val RESET_YAW = 0
     const val RESET_FULL = 1

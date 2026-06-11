@@ -10,6 +10,7 @@ import android.net.NetworkRequest
 import android.os.BatteryManager
 import cl.matiaspalma.everythingimu.core.ble.BleDeviceManager
 import cl.matiaspalma.everythingimu.core.calibration.CalibrationData
+import cl.matiaspalma.everythingimu.core.gamepad.GamepadSensorForwarder
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibration
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibrationSession
 import cl.matiaspalma.everythingimu.core.haptics.HapticBridge
@@ -150,7 +151,16 @@ object TrackingController {
         wifiBinder = WifiBinder(app)
         hapticBridge = HapticBridge(app)
         bleManager = BleDeviceManager(app) { eimuClient }
-        onControllerRumble = { handle, intensity -> bleManager?.rumble(handle, intensity) }
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            gamepadForwarder = GamepadSensorForwarder(app) { eimuClient }
+        }
+        onControllerRumble = { handle, intensity ->
+            if (handle >= GamepadSensorForwarder.HANDLE_BASE) {
+                gamepadForwarder?.rumble(handle, intensity)
+            } else {
+                bleManager?.rumble(handle, intensity)
+            }
+        }
         val repo = SensorRepository(app)
         sensors = repo
         repo.onGyroBiasUpdated = { bias ->
@@ -338,6 +348,7 @@ object TrackingController {
             announcePhone(e)
             prefs?.setServer(host, port)
             startRawPump(e)
+            gamepadForwarder?.start()
         } else {
             val c = client ?: clientReady.await()
             withContext(Dispatchers.IO) { c.connect(host, port) }
@@ -350,6 +361,7 @@ object TrackingController {
     fun disconnect() {
         client?.disconnect()
         eimuClient?.disconnect()
+        gamepadForwarder?.stop()
         sensors?.rawSampleSink = null
         pumpJob?.cancel()
         pumpJob = null
@@ -365,6 +377,9 @@ object TrackingController {
 
     private var bleManager: BleDeviceManager? = null
     fun bleManager(): BleDeviceManager? = bleManager
+
+    private var gamepadForwarder: GamepadSensorForwarder? = null
+    fun gamepadForwarder(): GamepadSensorForwarder? = gamepadForwarder
 
     private val mirrorJobs = mutableListOf<Job>()
 
