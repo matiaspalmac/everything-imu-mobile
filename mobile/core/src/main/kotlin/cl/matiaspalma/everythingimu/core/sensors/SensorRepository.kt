@@ -61,6 +61,13 @@ class SensorRepository(context: Context) : SensorEventListener {
         mag = magSensor != null,
     )
 
+    /**
+     * Raw-sample tap for eimu hub mode: fires at gyro rate with the
+     * bias-corrected gyro (rad/s), latest raw accel (m/s²), latest calibrated
+     * mag (µT, null until first sample) and the gyro hardware timestamp (ns).
+     */
+    @Volatile var rawSampleSink: ((gyro: Vec3, accel: FloatArray, mag: FloatArray?, tsNanos: Long) -> Unit)? = null
+
     @Volatile var fusionEnabled: Boolean = true
 
     /**
@@ -204,6 +211,9 @@ class SensorRepository(context: Context) : SensorEventListener {
                 pendingSnapshot = pendingSnapshot.copy(gyro = SensorSample(corrected, ts, acc, false))
                 emitSnapshot(ts)
                 runFusion(corrected)
+                rawSampleSink?.let { sink ->
+                    latestAccel?.let { a -> sink(corrected, a, if (magInputEnabled) latestMag else null, ts) }
+                }
             }
             Sensor.TYPE_GYROSCOPE_UNCALIBRATED -> {
                 gyroCount++
@@ -212,6 +222,9 @@ class SensorRepository(context: Context) : SensorEventListener {
                 pendingSnapshot = pendingSnapshot.copy(gyro = SensorSample(corrected, ts, acc, true))
                 emitSnapshot(ts)
                 runFusion(corrected)
+                rawSampleSink?.let { sink ->
+                    latestAccel?.let { a -> sink(corrected, a, if (magInputEnabled) latestMag else null, ts) }
+                }
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 accelCount++
