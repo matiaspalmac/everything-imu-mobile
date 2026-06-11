@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cl.matiaspalma.everythingimu.core.ble.BleDeviceManager
+import cl.matiaspalma.everythingimu.core.gamepad.GamepadKinds
+import cl.matiaspalma.everythingimu.core.gamepad.GamepadSensorForwarder
 import cl.matiaspalma.everythingimu.core.tracking.TrackingController
 import cl.matiaspalma.everythingimu.mobile.i18n.tr
 import cl.matiaspalma.everythingimu.mobile.theme.CardTitle
@@ -130,12 +132,78 @@ fun ControllersScreen() {
             }
         }
 
+        val forwarder = TrackingController.gamepadForwarder()
+        SectionHeader(t.gamepads_title)
+        EimuCard {
+            CardTitle(t.gamepads_title)
+            Text(t.gamepads_body, style = MaterialTheme.typography.bodySmall, color = EimuPalette.FgMuted)
+            if (Build.VERSION.SDK_INT < 31) {
+                Text(
+                    t.gamepads_needs_android12,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = EimuPalette.Warn,
+                )
+            } else if (forwarder != null) {
+                val pads by forwarder.entries.collectAsStateWithLifecycle()
+                if (pads.isEmpty()) {
+                    Text(t.gamepads_empty, style = MaterialTheme.typography.bodySmall, color = EimuPalette.FgMuted)
+                }
+                for (pad in pads) {
+                    GamepadRow(pad, forwarder)
+                }
+            }
+        }
+
         EimuCard {
             Text(
                 t.controllers_bt_classic_note,
                 style = MaterialTheme.typography.bodySmall,
                 color = EimuPalette.FgMuted,
             )
+        }
+    }
+}
+
+@Composable
+private fun GamepadRow(pad: GamepadSensorForwarder.Entry, forwarder: GamepadSensorForwarder) {
+    val t = tr
+    val streaming = pad.handle >= 0
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(pad.name, style = MaterialTheme.typography.bodyMedium, color = EimuPalette.FgPrimary)
+            val status = when {
+                !pad.hasMotion -> "${GamepadKinds.label(pad.kind)} · ${t.gamepads_no_motion}"
+                streaming -> "${GamepadKinds.label(pad.kind)} · ${t.controllers_streaming}" +
+                    if (pad.batteryPct >= 0) " · ${pad.batteryPct}%" else ""
+                else -> GamepadKinds.label(pad.kind)
+            }
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = when {
+                    !pad.hasMotion -> EimuPalette.Warn
+                    streaming -> EimuPalette.Success
+                    else -> EimuPalette.FgMuted
+                },
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        if (pad.hasMotion) {
+            OutlinedButton(
+                onClick = {
+                    if (streaming) forwarder.stopForwarding(pad.deviceId)
+                    else forwarder.startForwarding(pad.deviceId)
+                },
+            ) {
+                Text(
+                    if (streaming) t.gamepads_stop else t.gamepads_forward,
+                    color = if (streaming) EimuPalette.FgSecondary else EimuPalette.Accent,
+                )
+            }
         }
     }
 }
