@@ -18,10 +18,15 @@ bridge, which turns game controllers into trackers. This repo is the mobile half
 - Forwards BLE controllers paired to the phone as **additional trackers**:
   Joy-Con 2, Switch 2 Pro Controller, and HOPX BLE pucks. Scan, tap connect,
   and they appear in the desktop device list.
+- Forwards **regular paired gamepads** too (Android 12+): DualSense,
+  DualShock 4, Joy-Con 1, Pro Controller, and any pad whose motion sensors
+  the system exposes — read through Android's InputDevice sensor API, with
+  battery and rumble. Pair in system Bluetooth settings and they stream
+  automatically while connected to the desktop.
 - Desktop-initiated haptics: rumble flows back to the phone's vibration motor
   and to forwarded controllers.
-- Bluetooth Classic devices (Joy-Con 1, DualSense, Wii Remote) can't be hosted
-  by Android — pair those directly to the desktop bridge instead.
+- Wii Remotes can't be hosted by Android — pair those directly to the desktop
+  bridge instead.
 - Prefer the old direct path? Switch **Send tracking to → SlimeVR server** in
   Settings.
 
