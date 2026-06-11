@@ -69,8 +69,11 @@ object TrackingController {
     @Volatile var hubRole: String = "tracker"
         private set
 
-    private fun roleSendsPhone(): Boolean = hubRole != "gamepads"
-    private fun roleSendsGamepads(): Boolean = hubRole != "tracker"
+    /** True when core runs inside the Wear OS app — watch is tracker-only. */
+    @Volatile private var isWatch: Boolean = false
+
+    private fun roleSendsPhone(): Boolean = isWatch || hubRole != "gamepads"
+    private fun roleSendsGamepads(): Boolean = !isWatch && hubRole != "tracker"
 
     /** Hooked by the BLE controller manager to route desktop rumble to handles 1+. */
     @Volatile var onControllerRumble: ((Int, Float) -> Unit)? = null
@@ -151,6 +154,7 @@ object TrackingController {
         initialized = true
         val app = context.applicationContext
         appCtx = app
+        isWatch = app.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WATCH)
         val appPrefs = AppPrefs(app)
         prefs = appPrefs
         // Bind to Wi-Fi only while a tracking session is live (onServiceStart),
@@ -158,9 +162,13 @@ object TrackingController {
         // traffic through Wi-Fi, which is needless when idle.
         wifiBinder = WifiBinder(app)
         hapticBridge = HapticBridge(app)
-        bleManager = BleDeviceManager(app) { eimuClient }
-        if (android.os.Build.VERSION.SDK_INT >= 31) {
-            gamepadForwarder = GamepadSensorForwarder(app) { eimuClient }
+        // Watches are tracker-only: no BLE controller hosting, no gamepad
+        // forwarding — skip both managers entirely.
+        if (!isWatch) {
+            bleManager = BleDeviceManager(app) { eimuClient }
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                gamepadForwarder = GamepadSensorForwarder(app) { eimuClient }
+            }
         }
         onControllerRumble = { handle, intensity ->
             if (handle >= GamepadSensorForwarder.HANDLE_BASE) {
@@ -426,7 +434,7 @@ object TrackingController {
                 e.announceDevice(
                     EimuClient.AnnouncedDevice(
                         handle = PHONE_HANDLE,
-                        kind = EimuProtocol.KIND_PHONE,
+                        kind = if (isWatch) EimuProtocol.KIND_WATCH else EimuProtocol.KIND_PHONE,
                         mac = mac,
                         hasMag = magEnabled && availability.mag,
                         hasBattery = true,
