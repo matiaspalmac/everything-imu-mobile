@@ -375,6 +375,8 @@ object TrackingController {
             if (roleSendsPhone()) {
                 announcePhone(e)
                 startRawPump(e)
+            } else {
+                announcePhoneHapticsOnly(e)
             }
             if (roleSendsGamepads()) gamepadForwarder?.start()
         } else {
@@ -457,6 +459,29 @@ object TrackingController {
     }
 
     /**
+     * Gamepads-only role: the phone is not a tracker, but desktop haptics
+     * rules can still target it. `rateHz = 0` marks a haptics-only endpoint —
+     * the desktop registers it for rumble routing without ever creating a
+     * SlimeVR tracker.
+     */
+    private fun announcePhoneHapticsOnly(e: EimuClient) {
+        scope.launch {
+            e.announceDevice(
+                EimuClient.AnnouncedDevice(
+                    handle = PHONE_HANDLE,
+                    kind = if (isWatch) EimuProtocol.KIND_WATCH else EimuProtocol.KIND_PHONE,
+                    mac = deviceMac(),
+                    hasMag = false,
+                    hasBattery = false,
+                    hasRumble = hapticBridge?.isVibratorAvailable() == true,
+                    rateHz = 0,
+                    name = android.os.Build.MODEL ?: "Android",
+                ),
+            )
+        }
+    }
+
+    /**
      * eimu hub mode: forward raw bias-corrected samples at sendRateHz; the
      * desktop runs fusion. Local VQF keeps running for the UI orientation card.
      */
@@ -529,14 +554,23 @@ object TrackingController {
     private fun applyHubRole() {
         if (targetMode != "eimu") return
         val e = eimuClient ?: return
+        val connected =
+            _connection.value == ConnectionState.Connected || _connection.value == ConnectionState.Connecting
         if (roleSendsPhone()) {
-            if (_connection.value == ConnectionState.Connected || _connection.value == ConnectionState.Connecting) {
+            if (connected) {
+                // The desktop ignores re-announces of a live handle, so drop
+                // the previous (possibly haptics-only) registration first to
+                // force a fresh one with full tracker metadata.
+                e.removeDevice(PHONE_HANDLE)
                 announcePhone(e)
                 if (_running.value) startRawPump(e)
             }
         } else {
             sensors?.rawSampleSink = null
             e.removeDevice(PHONE_HANDLE)
+            // Keep the phone reachable for desktop haptics rules even when it
+            // is not a tracker: re-register as a rate-0 haptics-only endpoint.
+            if (connected) announcePhoneHapticsOnly(e)
         }
         if (roleSendsGamepads()) {
             if (_connection.value != ConnectionState.Disconnected) gamepadForwarder?.start()
