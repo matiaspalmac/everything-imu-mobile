@@ -98,6 +98,7 @@ fun SettingsScreen() {
     val shakeOn by prefs.shakeRecenter.collectAsStateWithLifecycle(initialValue = true)
     val osRotationOn by prefs.useOsRotation.collectAsStateWithLifecycle(initialValue = false)
     val targetMode by prefs.targetMode.collectAsStateWithLifecycle(initialValue = "eimu")
+    val hubRole by prefs.hubRole.collectAsStateWithLifecycle(initialValue = "both")
     val t = tr
 
     var host by remember { mutableStateOf("") }
@@ -137,6 +138,27 @@ fun SettingsScreen() {
                 }
                 ThemeOption(t.settings_target_slimevr, t.settings_server_hint, selected = targetMode == "slimevr") {
                     scope.launch { prefs.setTargetMode("slimevr") }
+                }
+            }
+            if (targetMode == "eimu") {
+                Text(
+                    t.settings_hub_role.uppercase(),
+                    color = EimuPalette.FgMuted,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.0.sp,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    ThemeOption(t.settings_hub_role_both, t.settings_hub_role_both_hint, selected = hubRole == "both") {
+                        scope.launch { prefs.setHubRole("both") }
+                    }
+                    ThemeOption(t.settings_hub_role_tracker, t.settings_hub_role_tracker_hint, selected = hubRole == "tracker") {
+                        scope.launch { prefs.setHubRole("tracker") }
+                    }
+                    ThemeOption(t.settings_hub_role_gamepads, t.settings_hub_role_gamepads_hint, selected = hubRole == "gamepads") {
+                        scope.launch { prefs.setHubRole("gamepads") }
+                    }
                 }
             }
         }

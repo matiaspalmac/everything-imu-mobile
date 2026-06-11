@@ -87,6 +87,14 @@ fun ControllersScreen() {
                     color = EimuPalette.Warn,
                 )
             }
+        } else if (TrackingController.hubRole == "tracker") {
+            EimuCard {
+                Text(
+                    t.controllers_role_disabled,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = EimuPalette.Warn,
+                )
+            }
         }
 
         SectionHeader(t.controllers_title)

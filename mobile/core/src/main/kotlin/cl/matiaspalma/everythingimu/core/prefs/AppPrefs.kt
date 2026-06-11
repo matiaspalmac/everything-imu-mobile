@@ -35,6 +35,13 @@ class AppPrefs(context: Context) {
      * fusion/devices) or "slimevr" (legacy owoTrack-direct).
      */
     val targetMode: Flow<String> = store.data.map { it[KEY_TARGET_MODE] ?: "eimu" }
+
+    /**
+     * What the hub streams in eimu mode: "both" (default — phone tracker +
+     * forwarded gamepads), "tracker" (phone IMU only), "gamepads"
+     * (controllers only, phone is not a tracker).
+     */
+    val hubRole: Flow<String> = store.data.map { it[KEY_HUB_ROLE] ?: "both" }
     val autoConnect: Flow<Boolean> = store.data.map { it[KEY_AUTO_CONNECT] ?: true }
     val deviceUuid: Flow<String> = store.data.map { it[KEY_UUID] ?: "" }
     val sensorWarningDismissed: Flow<Boolean> =
@@ -96,6 +103,10 @@ class AppPrefs(context: Context) {
 
     suspend fun setTargetMode(mode: String) {
         store.edit { it[KEY_TARGET_MODE] = mode }
+    }
+
+    suspend fun setHubRole(role: String) {
+        store.edit { it[KEY_HUB_ROLE] = role }
     }
 
     suspend fun setAutoConnect(value: Boolean) {
@@ -185,6 +196,7 @@ class AppPrefs(context: Context) {
         private val KEY_SHAKE_RECENTER = booleanPreferencesKey("shake_recenter")
         private val KEY_OS_ROTATION = booleanPreferencesKey("use_os_rotation")
         private val KEY_TARGET_MODE = stringPreferencesKey("target_mode")
+        private val KEY_HUB_ROLE = stringPreferencesKey("hub_role")
         private val KEY_AUTOSTART_HAPTICS = booleanPreferencesKey("autostart_haptics")
         private val KEY_GYRO_BIAS_X = floatPreferencesKey("gyro_bias_x")
         private val KEY_GYRO_BIAS_Y = floatPreferencesKey("gyro_bias_y")

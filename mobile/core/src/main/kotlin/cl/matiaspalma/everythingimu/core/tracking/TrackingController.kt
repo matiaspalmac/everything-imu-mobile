@@ -65,6 +65,13 @@ object TrackingController {
     @Volatile var targetMode: String = "eimu"
         private set
 
+    /** Hub role in eimu mode: "both" (default), "tracker", or "gamepads". */
+    @Volatile var hubRole: String = "both"
+        private set
+
+    private fun roleSendsPhone(): Boolean = hubRole != "gamepads"
+    private fun roleSendsGamepads(): Boolean = hubRole != "tracker"
+
     /** Hooked by the BLE controller manager to route desktop rumble to handles 1+. */
     @Volatile var onControllerRumble: ((Int, Float) -> Unit)? = null
     private var prefs: AppPrefs? = null
@@ -187,6 +194,13 @@ object TrackingController {
             eimuReady.complete(e)
         }
         scope.launch { appPrefs.targetMode.collect { targetMode = it } }
+        scope.launch {
+            appPrefs.hubRole.collect { role ->
+                val prev = hubRole
+                hubRole = role
+                if (prev != role) applyHubRole()
+            }
+        }
         scope.launch { appPrefs.sendRateHz.collect { sendRateHz = it } }
         scope.launch {
             appPrefs.magEnabled.collect {
@@ -251,7 +265,9 @@ object TrackingController {
                 if (pct in 0..100) {
                     val voltage = readBatteryVoltage(app)
                     if (targetMode == "eimu") {
-                        eimuClient?.sendBattery(PHONE_HANDLE, pct / 100f, charging = false)
+                        if (roleSendsPhone()) {
+                            eimuClient?.sendBattery(PHONE_HANDLE, pct / 100f, charging = false)
+                        }
                     } else {
                         client?.sendBattery(voltage, pct / 100f)
                     }
@@ -347,10 +363,12 @@ object TrackingController {
             val effectivePort = if (port == 6969) EimuProtocol.DEFAULT_PORT else port
             withContext(Dispatchers.IO) { e.connect(host, effectivePort) }
             mirror(e.state, e.stats, e.lastError)
-            announcePhone(e)
             prefs?.setServer(host, port)
-            startRawPump(e)
-            gamepadForwarder?.start()
+            if (roleSendsPhone()) {
+                announcePhone(e)
+                startRawPump(e)
+            }
+            if (roleSendsGamepads()) gamepadForwarder?.start()
         } else {
             val c = client ?: clientReady.await()
             withContext(Dispatchers.IO) { c.connect(host, port) }
@@ -371,8 +389,11 @@ object TrackingController {
 
     /** Recenter: BUTTON to eimu hub, or owoTrack BUTTON_PUSHED (60) direct. */
     fun sendRecenter() {
-        if (targetMode == "eimu") eimuClient?.sendButton(PHONE_HANDLE, EimuProtocol.RESET_YAW)
-        else client?.sendButtonPushed()
+        if (targetMode == "eimu") {
+            if (roleSendsPhone()) eimuClient?.sendButton(PHONE_HANDLE, EimuProtocol.RESET_YAW)
+        } else {
+            client?.sendButtonPushed()
+        }
     }
 
     fun eimuClientOrNull(): EimuClient? = eimuClient
@@ -487,9 +508,37 @@ object TrackingController {
         sensors?.start()
         _running.value = true
         if (targetMode == "eimu") {
-            eimuClient?.let { startRawPump(it) }
+            if (roleSendsPhone()) eimuClient?.let { startRawPump(it) }
         } else {
             startQuaternionPump()
+        }
+    }
+
+    /**
+     * Live hub-role switch while connected: tear down or bring up the phone
+     * tracker and the gamepad forwarder without touching the socket.
+     */
+    private fun applyHubRole() {
+        if (targetMode != "eimu") return
+        val e = eimuClient ?: return
+        if (roleSendsPhone()) {
+            if (_connection.value == ConnectionState.Connected || _connection.value == ConnectionState.Connecting) {
+                announcePhone(e)
+                if (_running.value) startRawPump(e)
+            }
+        } else {
+            sensors?.rawSampleSink = null
+            e.removeDevice(PHONE_HANDLE)
+        }
+        if (roleSendsGamepads()) {
+            if (_connection.value != ConnectionState.Disconnected) gamepadForwarder?.start()
+        } else {
+            gamepadForwarder?.stop()
+            bleManager?.let { mgr ->
+                for (entry in mgr.entries.value) {
+                    if (entry.handle >= 0) mgr.disconnect(entry.address)
+                }
+            }
         }
     }
 
