@@ -69,6 +69,9 @@ object NetworkDiagnostics {
         val serverName = if (eimuMode) "the eimu desktop app" else "SlimeVR Server"
         val hints = buildList {
             if (!wifiConnected) add("Phone is not on Wi-Fi. Tracking needs LAN, mobile data won't reach the PC.")
+            if (wifiConnected && ssid == null) {
+                add("SSID hidden by Android — reading it needs the Location permission and location services on.")
+            }
             if (wifiConnected && localIp == null) add("Wi-Fi connected but no IPv4 address. Network may be captive.")
             if (host.isNotBlank() && !hostReachable) add("Cannot send UDP to $host:$effectivePort. Check the address is the PC's IPv4.")
             if (hostReachable && !serverResponded) add("Server didn't reply. Make sure $serverName is running and the Windows firewall allows it (Private network).")

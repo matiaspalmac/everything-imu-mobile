@@ -2,6 +2,7 @@ package cl.matiaspalma.everythingimu.mobile.settings
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -112,6 +113,27 @@ fun SettingsScreen() {
     val portValid by remember(port) { derivedStateOf { port.toIntOrNull() != null } }
     var diagnostics by remember { mutableStateOf<DiagnosticsReport?>(null) }
     var diagnosing by remember { mutableStateOf(false) }
+
+    // Reading the Wi-Fi SSID needs fine location at runtime (Android 9+).
+    // Ask lazily, the first time the user runs diagnostics.
+    fun runDiagnostics() {
+        scope.launch {
+            diagnosing = true
+            diagnostics = withContext(Dispatchers.IO) {
+                NetworkDiagnostics.run(
+                    ctx,
+                    host.trim(),
+                    port.toIntOrNull() ?: 6969,
+                    TrackingController.deviceMac(),
+                    eimuMode = targetMode == "eimu",
+                )
+            }
+            diagnosing = false
+        }
+    }
+    val locationLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { runDiagnostics() }
 
     Column(
         modifier = Modifier
@@ -309,18 +331,13 @@ fun SettingsScreen() {
             )
             OutlinedButton(
                 onClick = {
-                    scope.launch {
-                        diagnosing = true
-                        diagnostics = withContext(Dispatchers.IO) {
-                            NetworkDiagnostics.run(
-                                ctx,
-                                host.trim(),
-                                port.toIntOrNull() ?: 6969,
-                                TrackingController.deviceMac(),
-                                eimuMode = targetMode == "eimu",
-                            )
-                        }
-                        diagnosing = false
+                    val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                        ctx, android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    if (granted) {
+                        runDiagnostics()
+                    } else {
+                        locationLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
