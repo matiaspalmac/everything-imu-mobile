@@ -97,6 +97,7 @@ fun SettingsScreen() {
     val magOn by prefs.magEnabled.collectAsStateWithLifecycle(initialValue = true)
     val shakeOn by prefs.shakeRecenter.collectAsStateWithLifecycle(initialValue = true)
     val osRotationOn by prefs.useOsRotation.collectAsStateWithLifecycle(initialValue = false)
+    val targetMode by prefs.targetMode.collectAsStateWithLifecycle(initialValue = "eimu")
     val t = tr
 
     var host by remember { mutableStateOf("") }
@@ -125,6 +126,19 @@ fun SettingsScreen() {
         ) {
             Text(t.settings_title, style = MaterialTheme.typography.titleLarge, color = EimuPalette.FgPrimary)
             Text(t.settings_autosave, style = MaterialTheme.typography.bodySmall, color = EimuPalette.FgMuted)
+        }
+
+        SectionHeader(t.settings_target_mode)
+        EimuCard {
+            CardTitle(t.settings_target_mode)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                ThemeOption(t.settings_target_eimu, t.settings_target_hint, selected = targetMode == "eimu") {
+                    scope.launch { prefs.setTargetMode("eimu") }
+                }
+                ThemeOption(t.settings_target_slimevr, t.settings_server_hint, selected = targetMode == "slimevr") {
+                    scope.launch { prefs.setTargetMode("slimevr") }
+                }
+            }
         }
 
         SectionHeader(t.settings_server)
