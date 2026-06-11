@@ -37,11 +37,11 @@ class AppPrefs(context: Context) {
     val targetMode: Flow<String> = store.data.map { it[KEY_TARGET_MODE] ?: "eimu" }
 
     /**
-     * What the hub streams in eimu mode: "both" (default — phone tracker +
-     * forwarded gamepads), "tracker" (phone IMU only), "gamepads"
-     * (controllers only, phone is not a tracker).
+     * What the hub streams in eimu mode: "tracker" (default — phone IMU
+     * only), "gamepads" (controllers only, phone is not a tracker), or
+     * "both" (phone tracker + forwarded gamepads).
      */
-    val hubRole: Flow<String> = store.data.map { it[KEY_HUB_ROLE] ?: "both" }
+    val hubRole: Flow<String> = store.data.map { it[KEY_HUB_ROLE] ?: "tracker" }
     val autoConnect: Flow<Boolean> = store.data.map { it[KEY_AUTO_CONNECT] ?: true }
     val deviceUuid: Flow<String> = store.data.map { it[KEY_UUID] ?: "" }
     val sensorWarningDismissed: Flow<Boolean> =

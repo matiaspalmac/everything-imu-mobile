@@ -65,8 +65,8 @@ object TrackingController {
     @Volatile var targetMode: String = "eimu"
         private set
 
-    /** Hub role in eimu mode: "both" (default), "tracker", or "gamepads". */
-    @Volatile var hubRole: String = "both"
+    /** Hub role in eimu mode: "tracker" (default), "gamepads", or "both". */
+    @Volatile var hubRole: String = "tracker"
         private set
 
     private fun roleSendsPhone(): Boolean = hubRole != "gamepads"
