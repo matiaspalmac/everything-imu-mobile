@@ -11,7 +11,21 @@ bridge, which turns game controllers into trackers. This repo is the mobile half
 
 ## Features
 
-**Phone tracker**
+**eimu hub mode (default)**
+- Streams the phone's raw IMU to the eimu desktop app over UDP, which runs
+  sensor fusion and registers the phone as a tracker — one place for all your
+  devices, mounting, and calibration.
+- Forwards BLE controllers paired to the phone as **additional trackers**:
+  Joy-Con 2, Switch 2 Pro Controller, and HOPX BLE pucks. Scan, tap connect,
+  and they appear in the desktop device list.
+- Desktop-initiated haptics: rumble flows back to the phone's vibration motor
+  and to forwarded controllers.
+- Bluetooth Classic devices (Joy-Con 1, DualSense, Wii Remote) can't be hosted
+  by Android — pair those directly to the desktop bridge instead.
+- Prefer the old direct path? Switch **Send tracking to → SlimeVR server** in
+  Settings.
+
+**Phone tracker (direct mode)**
 - Streams orientation to SlimeVR-Server over UDP — same protocol the desktop
   bridge speaks, so the server treats it like any other tracker.
 - Native VQF sensor fusion (Rust core via JNI) with a pure-Kotlin Madgwick
