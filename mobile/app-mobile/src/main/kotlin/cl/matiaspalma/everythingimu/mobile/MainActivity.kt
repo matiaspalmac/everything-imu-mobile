@@ -64,6 +64,7 @@ import cl.matiaspalma.everythingimu.core.prefs.AppPrefs
 import cl.matiaspalma.everythingimu.core.sensors.SensorSample
 import cl.matiaspalma.everythingimu.core.tracking.TrackingController
 import cl.matiaspalma.everythingimu.mobile.calibration.CalibrationScreen
+import cl.matiaspalma.everythingimu.mobile.controllers.ControllersScreen
 import cl.matiaspalma.everythingimu.mobile.haptics.HapticsScreen
 import cl.matiaspalma.everythingimu.mobile.i18n.Language
 import cl.matiaspalma.everythingimu.mobile.i18n.LocalStrings
@@ -193,6 +194,7 @@ private fun RootScreen() {
             ) { page ->
                 when (tabs[page]) {
                     EimuTab.Home -> HomeScreen()
+                    EimuTab.Controllers -> ControllersScreen()
                     EimuTab.Calibrate -> CalibrationScreen(onClose = {
                         scope.launch { pagerState.animateScrollToPage(EimuTab.Home.ordinal) }
                     })

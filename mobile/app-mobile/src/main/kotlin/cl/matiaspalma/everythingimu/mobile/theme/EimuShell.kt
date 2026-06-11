@@ -8,10 +8,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -32,6 +34,7 @@ enum class EimuTab(
     val outlined: ImageVector,
 ) {
     Home("Home", "Inicio", Icons.Filled.Home, Icons.Outlined.Home),
+    Controllers("Controllers", "Mandos", Icons.Filled.SportsEsports, Icons.Outlined.SportsEsports),
     Calibrate("Calibrate", "Calibrar", Icons.Filled.GraphicEq, Icons.Outlined.GraphicEq),
     Haptics("Haptics", "Vibración", Icons.Filled.Vibration, Icons.Outlined.Vibration),
     Settings("Settings", "Ajustes", Icons.Filled.Settings, Icons.Outlined.Settings),
