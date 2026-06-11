@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Process-wide singleton owning sensor + fusion + network components.
@@ -232,7 +233,8 @@ object TrackingController {
             var prev = 0L
             while (true) {
                 delay(1000)
-                val cur = client?.stats?.value?.packetsSent ?: 0L
+                // _clientStats mirrors whichever client (eimu/slimevr) is active.
+                val cur = _clientStats.value.packetsSent
                 _tps.value = (cur - prev).coerceAtLeast(0L).toFloat()
                 prev = cur
             }
@@ -399,19 +401,29 @@ object TrackingController {
     private fun announcePhone(e: EimuClient) {
         scope.launch {
             val mac = deviceMac()
-            val rate = (sensors?.measuredRateHz ?: 0.0).toInt()
-            e.announceDevice(
-                EimuClient.AnnouncedDevice(
-                    handle = PHONE_HANDLE,
-                    kind = EimuProtocol.KIND_PHONE,
-                    mac = mac,
-                    hasMag = magEnabled && availability.mag,
-                    hasBattery = true,
-                    hasRumble = hapticBridge?.isVibratorAvailable() == true,
-                    rateHz = if (rate in 20..1000) rate else 100,
-                    name = android.os.Build.MODEL ?: "Android",
-                ),
-            )
+            suspend fun announce(rate: Int) {
+                e.announceDevice(
+                    EimuClient.AnnouncedDevice(
+                        handle = PHONE_HANDLE,
+                        kind = EimuProtocol.KIND_PHONE,
+                        mac = mac,
+                        hasMag = magEnabled && availability.mag,
+                        hasBattery = true,
+                        hasRumble = hapticBridge?.isVibratorAvailable() == true,
+                        rateHz = if (rate in 20..1000) rate else 100,
+                        name = android.os.Build.MODEL ?: "Android",
+                    ),
+                )
+            }
+            announce((sensors?.measuredRateHz ?: 0.0).toInt())
+            // The gyro-rate warmup usually hasn't finished at connect time, so
+            // the first announce carries the 100 Hz fallback. Re-announce once
+            // the measured rate lands so the desktop shows the real figure
+            // (fusion dt is unaffected — it follows the sample timestamps).
+            withTimeoutOrNull(15_000) {
+                while ((sensors?.measuredRateHz ?: 0.0) <= 0.0) delay(500)
+            } ?: return@launch
+            announce((sensors?.measuredRateHz ?: 0.0).toInt())
         }
     }
 
