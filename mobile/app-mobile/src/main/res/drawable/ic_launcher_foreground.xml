@@ -1,5 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Foreground = shared desktop icon (crates/everything-imu-app/icons/icon.png). -->
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/ic_launcher_src"
-    android:gravity="fill" />
+<!-- eIMU gyro glyph — vector twin of the desktop icon source
+     (apps/everything-imu-app/icons/icon.svg in the desktop repo). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:scaleX="0.75"
+        android:scaleY="0.75"
+        android:pivotX="512"
+        android:pivotY="512">
+        <path
+            android:pathData="M 232 512 a 280 280 0 1 0 560 0 a 280 280 0 1 0 -560 0"
+            android:strokeColor="#FF4F0A"
+            android:strokeWidth="58" />
+        <group
+            android:rotation="-24"
+            android:pivotX="512"
+            android:pivotY="512">
+            <path
+                android:pathData="M 182 512 a 330 104 0 1 0 660 0 a 330 104 0 1 0 -660 0"
+                android:strokeColor="#FF4F0A"
+                android:strokeWidth="58" />
+        </group>
+        <path
+            android:pathData="M 745 378 a 68 68 0 1 0 136 0 a 68 68 0 1 0 -136 0"
+            android:fillColor="#FF4F0A" />
+        <path
+            android:pathData="M 143 646 a 68 68 0 1 0 136 0 a 68 68 0 1 0 -136 0"
+            android:fillColor="#FF4F0A" />
+    </group>
+</vector>
