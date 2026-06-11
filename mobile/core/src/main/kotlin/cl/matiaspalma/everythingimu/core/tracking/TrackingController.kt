@@ -401,6 +401,10 @@ object TrackingController {
     fun sendRecenter() {
         if (targetMode == "eimu") {
             if (roleSendsPhone()) eimuClient?.sendButton(PHONE_HANDLE, EimuProtocol.RESET_YAW)
+            // Local feedback: the desktop resets its own fusion + SlimeVR, but
+            // the on-phone orientation card runs a separate VQF — zero it too
+            // so the user sees the recenter take effect immediately.
+            autoMount()
         } else {
             client?.sendButtonPushed()
         }
