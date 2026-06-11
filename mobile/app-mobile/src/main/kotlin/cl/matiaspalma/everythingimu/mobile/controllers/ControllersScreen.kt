@@ -154,13 +154,6 @@ fun ControllersScreen() {
             }
         }
 
-        EimuCard {
-            Text(
-                t.controllers_bt_classic_note,
-                style = MaterialTheme.typography.bodySmall,
-                color = EimuPalette.FgMuted,
-            )
-        }
     }
 }
 

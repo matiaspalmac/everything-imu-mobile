@@ -25,8 +25,6 @@ bridge, which turns game controllers into trackers. This repo is the mobile half
   automatically while connected to the desktop.
 - Desktop-initiated haptics: rumble flows back to the phone's vibration motor
   and to forwarded controllers.
-- Wii Remotes can't be hosted by Android — pair those directly to the desktop
-  bridge instead.
 - Prefer the old direct path? Switch **Send tracking to → SlimeVR server** in
   Settings.
 
