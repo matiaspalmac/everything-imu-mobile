@@ -504,6 +504,20 @@ object TrackingController {
                 lastSendNanos = now
             }
         }
+        // UI-only mirror: the fusion card reads mountedQuaternion, which the
+        // SlimeVR-direct pump normally feeds. In hub mode the desktop owns
+        // fusion, but the local VQF keeps running — surface it at ~60 Hz so
+        // the card stays live.
+        pumpJob = scope.launch {
+            var lastUiNanos = 0L
+            repo.quaternion.collect { q ->
+                val now = System.nanoTime()
+                if (now - lastUiNanos >= UI_QUAT_INTERVAL_NANOS) {
+                    _mountedQuaternion.value = applyMountOffset(q)
+                    lastUiNanos = now
+                }
+            }
+        }
     }
 
     suspend fun persistServer(host: String, port: Int) {
