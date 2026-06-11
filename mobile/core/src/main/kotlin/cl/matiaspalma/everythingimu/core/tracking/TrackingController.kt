@@ -19,6 +19,8 @@ import cl.matiaspalma.everythingimu.core.fusion.normalized
 import cl.matiaspalma.everythingimu.core.fusion.VqfEngine
 import cl.matiaspalma.everythingimu.core.net.ClientStats
 import cl.matiaspalma.everythingimu.core.net.ConnectionState
+import cl.matiaspalma.everythingimu.core.net.EimuClient
+import cl.matiaspalma.everythingimu.core.net.EimuProtocol
 import cl.matiaspalma.everythingimu.core.net.SlimeVrClient
 import cl.matiaspalma.everythingimu.core.net.WifiBinder
 import cl.matiaspalma.everythingimu.core.prefs.AppPrefs
@@ -53,6 +55,15 @@ object TrackingController {
     // ensureInit). connect() awaits this so a connect issued during cold start —
     // before the init coroutine finishes — no longer silently no-ops.
     private val clientReady = CompletableDeferred<SlimeVrClient>()
+    private var eimuClient: EimuClient? = null
+    private val eimuReady = CompletableDeferred<EimuClient>()
+
+    /** "eimu" (desktop hub, default) or "slimevr" (legacy owoTrack-direct). */
+    @Volatile var targetMode: String = "eimu"
+        private set
+
+    /** Hooked by the BLE controller manager to route desktop rumble to handles 1+. */
+    @Volatile var onControllerRumble: ((Int, Float) -> Unit)? = null
     private var prefs: AppPrefs? = null
     private var wifiBinder: WifiBinder? = null
     private var pumpJob: Job? = null
@@ -151,10 +162,17 @@ object TrackingController {
             val c = SlimeVrClient(mac)
             client = c
             clientReady.complete(c)
-            launch { c.state.collectStateInto(_connection) }
-            launch { c.stats.collectStateInto(_clientStats) }
-            launch { c.lastError.collectStateInto(_lastError) }
+            mirror(c.state, c.stats, c.lastError)
+            val deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim()
+            val e = EimuClient(EimuClient.uuidBytes(uuid), deviceName.ifBlank { "Android" })
+            e.onRumble = { handle, intensity ->
+                if (handle == PHONE_HANDLE) hapticBridge?.pulse(intensity)
+                else onControllerRumble?.invoke(handle, intensity)
+            }
+            eimuClient = e
+            eimuReady.complete(e)
         }
+        scope.launch { appPrefs.targetMode.collect { targetMode = it } }
         scope.launch { appPrefs.sendRateHz.collect { sendRateHz = it } }
         scope.launch {
             appPrefs.magEnabled.collect {
@@ -217,7 +235,11 @@ object TrackingController {
                 _batteryLevel.value = pct
                 if (pct in 0..100) {
                     val voltage = readBatteryVoltage(app)
-                    client?.sendBattery(voltage, pct / 100f)
+                    if (targetMode == "eimu") {
+                        eimuClient?.sendBattery(PHONE_HANDLE, pct / 100f, charging = false)
+                    } else {
+                        client?.sendBattery(voltage, pct / 100f)
+                    }
                 }
                 delay(30_000)
             }
@@ -302,22 +324,99 @@ object TrackingController {
     }
 
     suspend fun connect(host: String, port: Int) {
-        // Await the client if the init coroutine hasn't constructed it yet.
-        val c = client ?: clientReady.await()
-        withContext(Dispatchers.IO) { c.connect(host, port) }
-        prefs?.setServer(host, port)
-        startQuaternionPump()
+        if (targetMode == "eimu") {
+            // Await the client if the init coroutine hasn't constructed it yet.
+            val e = eimuClient ?: eimuReady.await()
+            // The persisted port predates hub mode (SlimeVR default 6969);
+            // substitute the eimu listener port unless the user typed a custom one.
+            val effectivePort = if (port == 6969) EimuProtocol.DEFAULT_PORT else port
+            withContext(Dispatchers.IO) { e.connect(host, effectivePort) }
+            mirror(e.state, e.stats, e.lastError)
+            announcePhone(e)
+            prefs?.setServer(host, port)
+            startRawPump(e)
+        } else {
+            val c = client ?: clientReady.await()
+            withContext(Dispatchers.IO) { c.connect(host, port) }
+            mirror(c.state, c.stats, c.lastError)
+            prefs?.setServer(host, port)
+            startQuaternionPump()
+        }
     }
 
     fun disconnect() {
         client?.disconnect()
+        eimuClient?.disconnect()
+        sensors?.rawSampleSink = null
         pumpJob?.cancel()
         pumpJob = null
     }
 
-    /** owoTrack-compat recenter (BUTTON_PUSHED packet 60). */
+    /** Recenter: BUTTON to eimu hub, or owoTrack BUTTON_PUSHED (60) direct. */
     fun sendRecenter() {
-        client?.sendButtonPushed()
+        if (targetMode == "eimu") eimuClient?.sendButton(PHONE_HANDLE, EimuProtocol.RESET_YAW)
+        else client?.sendButtonPushed()
+    }
+
+    fun eimuClientOrNull(): EimuClient? = eimuClient
+
+    private val mirrorJobs = mutableListOf<Job>()
+
+    /** Re-point the UI-facing state flows at whichever client is active. */
+    private fun mirror(
+        stateF: StateFlow<ConnectionState>,
+        statsF: StateFlow<ClientStats>,
+        errF: StateFlow<String?>,
+    ) {
+        mirrorJobs.forEach { it.cancel() }
+        mirrorJobs.clear()
+        mirrorJobs += scope.launch { stateF.collectStateInto(_connection) }
+        mirrorJobs += scope.launch { statsF.collectStateInto(_clientStats) }
+        mirrorJobs += scope.launch { errF.collectStateInto(_lastError) }
+    }
+
+    private fun announcePhone(e: EimuClient) {
+        scope.launch {
+            val mac = deviceMac()
+            val rate = (sensors?.measuredRateHz ?: 0.0).toInt()
+            e.announceDevice(
+                EimuClient.AnnouncedDevice(
+                    handle = PHONE_HANDLE,
+                    kind = EimuProtocol.KIND_PHONE,
+                    mac = mac,
+                    hasMag = magEnabled && availability.mag,
+                    hasBattery = true,
+                    hasRumble = hapticBridge?.isVibratorAvailable() == true,
+                    rateHz = if (rate in 20..1000) rate else 100,
+                    name = android.os.Build.MODEL ?: "Android",
+                ),
+            )
+        }
+    }
+
+    /**
+     * eimu hub mode: forward raw bias-corrected samples at sendRateHz; the
+     * desktop runs fusion. Local VQF keeps running for the UI orientation card.
+     */
+    private fun startRawPump(e: EimuClient) {
+        pumpJob?.cancel()
+        pumpJob = null
+        val repo = sensors ?: return
+        var lastSendNanos = 0L
+        repo.rawSampleSink = { gyro, accel, mag, tsNanos ->
+            val now = System.nanoTime()
+            val intervalNs = 1_000_000_000L / sendRateHz.coerceAtLeast(20)
+            if (now - lastSendNanos >= intervalNs) {
+                e.sendImu(
+                    PHONE_HANDLE,
+                    tsNanos / 1_000,
+                    floatArrayOf(gyro.x, gyro.y, gyro.z),
+                    accel,
+                    mag,
+                )
+                lastSendNanos = now
+            }
+        }
     }
 
     suspend fun persistServer(host: String, port: Int) {
@@ -354,11 +453,16 @@ object TrackingController {
         wifiBinder?.bindToWifi()
         sensors?.start()
         _running.value = true
-        startQuaternionPump()
+        if (targetMode == "eimu") {
+            eimuClient?.let { startRawPump(it) }
+        } else {
+            startQuaternionPump()
+        }
     }
 
     internal fun onServiceStop() {
         sensors?.stop()
+        sensors?.rawSampleSink = null
         wifiBinder?.release()
         _running.value = false
         pumpJob?.cancel()
@@ -411,6 +515,7 @@ object TrackingController {
     private val emptyRates = MutableStateFlow(SensorRates()).asStateFlow()
     private val emptyQuat = MutableStateFlow(Quaternion.IDENTITY).asStateFlow()
 
+    private const val PHONE_HANDLE = 0
     private const val UI_QUAT_INTERVAL_NANOS = 16_000_000L
     private const val DEFAULT_UUID = "00000000-0000-0000-0000-000000000000"
     private const val SHAKE_THRESHOLD_MS2 = 25f

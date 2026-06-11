@@ -220,6 +220,12 @@ class HapticBridge(context: Context) {
         triggerVibration(1.0f)
     }
 
+    /** Direct one-shot pulse from the eimu desktop rumble backchannel. */
+    fun pulse(intensity: Float) {
+        val clamped = intensity.coerceIn(0f, 1f)
+        if (clamped <= 0f) cancelVibration() else triggerVibration(clamped)
+    }
+
     companion object {
         private const val MAX_LOG = 32
     }
