@@ -317,6 +317,7 @@ fun SettingsScreen() {
                                 host.trim(),
                                 port.toIntOrNull() ?: 6969,
                                 TrackingController.deviceMac(),
+                                eimuMode = targetMode == "eimu",
                             )
                         }
                         diagnosing = false

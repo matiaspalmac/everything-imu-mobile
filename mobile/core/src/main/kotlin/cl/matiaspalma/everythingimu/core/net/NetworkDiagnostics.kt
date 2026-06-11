@@ -39,6 +39,7 @@ object NetworkDiagnostics {
         host: String,
         port: Int,
         mac: ByteArray,
+        eimuMode: Boolean = false,
     ): DiagnosticsReport {
         val cm = context.getSystemService<ConnectivityManager>()
         val wifi = context.getSystemService<WifiManager>()
@@ -54,17 +55,23 @@ object NetworkDiagnostics {
             "${ip and 0xff}.${(ip shr 8) and 0xff}.${(ip shr 16) and 0xff}.${(ip shr 24) and 0xff}"
         }
 
+        // Probe whichever server the user is actually targeting: the eimu
+        // desktop hub (HELLO/ACK on its own port) or SlimeVR (handshake).
+        val effectivePort = if (eimuMode && port == 6969) EimuProtocol.DEFAULT_PORT else port
         val (hostReachable, serverResponded) = if (host.isBlank()) {
             false to false
+        } else if (eimuMode) {
+            probeEimu(host, effectivePort)
         } else {
             probeServer(host, port, mac)
         }
 
+        val serverName = if (eimuMode) "the eimu desktop app" else "SlimeVR Server"
         val hints = buildList {
             if (!wifiConnected) add("Phone is not on Wi-Fi. Tracking needs LAN, mobile data won't reach the PC.")
             if (wifiConnected && localIp == null) add("Wi-Fi connected but no IPv4 address. Network may be captive.")
-            if (host.isNotBlank() && !hostReachable) add("Cannot send UDP to $host:$port. Check the address is the PC's IPv4.")
-            if (hostReachable && !serverResponded) add("Server didn't reply. Make sure SlimeVR Server is running and the Windows firewall allows it (Private network).")
+            if (host.isNotBlank() && !hostReachable) add("Cannot send UDP to $host:$effectivePort. Check the address is the PC's IPv4.")
+            if (hostReachable && !serverResponded) add("Server didn't reply. Make sure $serverName is running and the Windows firewall allows it (Private network).")
             if (localIp != null && host.isNotBlank() && !sameSubnet24(localIp, host)) {
                 add("Phone IP ($localIp) and server IP ($host) look like different /24 subnets — guest network or VLAN isolation likely.")
             }
@@ -78,6 +85,28 @@ object NetworkDiagnostics {
             serverResponded = serverResponded,
             hints = hints,
         )
+    }
+
+    /** eimu hub probe: send a HELLO, expect a HELLO_ACK back. */
+    private fun probeEimu(host: String, port: Int): Pair<Boolean, Boolean> {
+        val sock = DatagramSocket()
+        return try {
+            sock.soTimeout = 1500
+            val hello = EimuProtocol.hello(ByteArray(16), "diagnostics")
+            val addr = InetSocketAddress(host, port).address ?: return false to false
+            sock.send(DatagramPacket(hello, hello.size, addr, port))
+            val buf = ByteArray(64)
+            val recv = DatagramPacket(buf, buf.size)
+            sock.receive(recv)
+            val acked = EimuProtocol.parseIncoming(recv.data, recv.length) is EimuProtocol.Incoming.HelloAck
+            true to acked
+        } catch (_: java.net.SocketTimeoutException) {
+            true to false
+        } catch (_: Throwable) {
+            false to false
+        } finally {
+            sock.close()
+        }
     }
 
     private fun probeServer(host: String, port: Int, mac: ByteArray): Pair<Boolean, Boolean> {
