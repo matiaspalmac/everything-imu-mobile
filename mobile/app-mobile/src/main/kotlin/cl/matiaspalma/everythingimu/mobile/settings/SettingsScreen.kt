@@ -203,8 +203,8 @@ fun SettingsScreen() {
             Slider(
                 value = sendRateHz.toFloat(),
                 onValueChange = { scope.launch { prefs.setSendRateHz(it.toInt()) } },
-                valueRange = 30f..200f,
-                steps = 16,
+                valueRange = 30f..400f,
+                steps = 36,
                 colors = SliderDefaults.colors(
                     thumbColor = EimuPalette.Accent,
                     activeTrackColor = EimuPalette.Accent,

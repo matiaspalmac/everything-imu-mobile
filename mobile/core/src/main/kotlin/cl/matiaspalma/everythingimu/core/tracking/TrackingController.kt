@@ -419,7 +419,11 @@ object TrackingController {
                     ),
                 )
             }
-            announce((sensors?.measuredRateHz ?: 0.0).toInt())
+            // What the desktop receives is the sensor rate capped by the send
+            // throttle — announce that, not the raw gyro rate.
+            fun effectiveRate() =
+                minOf((sensors?.measuredRateHz ?: 0.0).toInt(), sendRateHz)
+            announce(effectiveRate())
             // The gyro-rate warmup usually hasn't finished at connect time, so
             // the first announce carries the 100 Hz fallback. Re-announce once
             // the measured rate lands so the desktop shows the real figure
@@ -427,7 +431,7 @@ object TrackingController {
             withTimeoutOrNull(15_000) {
                 while ((sensors?.measuredRateHz ?: 0.0) <= 0.0) delay(500)
             } ?: return@launch
-            announce((sensors?.measuredRateHz ?: 0.0).toInt())
+            announce(effectiveRate())
         }
     }
 
@@ -462,11 +466,11 @@ object TrackingController {
         pumpJob?.cancel()
         pumpJob = null
         val repo = sensors ?: return
-        var lastSendNanos = 0L
+        var nextSendNanos = 0L
         repo.rawSampleSink = { gyro, accel, mag, tsNanos ->
             val now = System.nanoTime()
             val intervalNs = 1_000_000_000L / sendRateHz.coerceAtLeast(20)
-            if (now - lastSendNanos >= intervalNs) {
+            if (now >= nextSendNanos) {
                 e.sendImu(
                     PHONE_HANDLE,
                     tsNanos / 1_000,
@@ -474,7 +478,14 @@ object TrackingController {
                     accel,
                     mag,
                 )
-                lastSendNanos = now
+                // Advance the deadline in exact intervals instead of resetting
+                // it to `now`: sends can only happen on sensor-event boundaries
+                // (~2.5 ms at 395 Hz), and re-anchoring rounds every period up
+                // to a whole number of events — a 200 Hz target decimated to
+                // ~150 Hz. Fall back to re-anchoring only after a long gap.
+                nextSendNanos =
+                    if (now - nextSendNanos < intervalNs) nextSendNanos + intervalNs
+                    else now + intervalNs
             }
         }
         // UI-only mirror: the desktop owns fusion, but the local VQF keeps
