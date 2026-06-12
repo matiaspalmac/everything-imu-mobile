@@ -39,7 +39,13 @@ class HopxDevice(
     @Volatile private var closed = false
 
     fun connect() {
-        gatt = btDevice.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+        // The TRANSPORT_LE overload needs API 23; BLE scanning itself is
+        // gated on API 31 permissions upstream, so the fallback is theoretical.
+        gatt = if (Build.VERSION.SDK_INT >= 23) {
+            btDevice.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+        } else {
+            btDevice.connectGatt(context, false, callback)
+        }
     }
 
     fun close() {

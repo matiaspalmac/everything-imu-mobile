@@ -267,7 +267,7 @@ class GamepadSensorForwarder(
         private const val TAG = "GamepadForwarder"
 
         /** Keeps gamepad handles clear of the BLE manager's 1+ range. */
-        const val HANDLE_BASE = 1000
+        const val HANDLE_BASE = GamepadKinds.HANDLE_BASE
 
         private const val DEFAULT_RATE_HZ = 250
         private const val BATTERY_EVERY_MS = 30_000L

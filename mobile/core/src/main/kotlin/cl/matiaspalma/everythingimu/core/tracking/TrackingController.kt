@@ -8,6 +8,7 @@ import android.net.NetworkRequest
 import android.os.BatteryManager
 import cl.matiaspalma.everythingimu.core.ble.BleDeviceManager
 import cl.matiaspalma.everythingimu.core.calibration.CalibrationData
+import cl.matiaspalma.everythingimu.core.gamepad.GamepadKinds
 import cl.matiaspalma.everythingimu.core.gamepad.GamepadSensorForwarder
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibration
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibrationSession
@@ -164,8 +165,12 @@ object TrackingController {
             }
         }
         onControllerRumble = { handle, intensity ->
-            if (handle >= GamepadSensorForwarder.HANDLE_BASE) {
-                gamepadForwarder?.rumble(handle, intensity)
+            if (handle >= GamepadKinds.HANDLE_BASE) {
+                // The forwarder only exists on API 31+ (checked at init), but
+                // lint can't trace nullability across fields — re-gate here.
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    gamepadForwarder?.rumble(handle, intensity)
+                }
             } else {
                 bleManager?.rumble(handle, intensity)
             }
@@ -351,7 +356,7 @@ object TrackingController {
         } else {
             announcePhoneHapticsOnly(e)
         }
-        if (roleSendsGamepads()) gamepadForwarder?.start()
+        if (roleSendsGamepads()) startGamepadForwarder()
     }
 
     /** Broadcast HELLO on the LAN; returns the desktop's IP or null. */
@@ -364,7 +369,7 @@ object TrackingController {
 
     fun disconnect() {
         eimuClient?.disconnect()
-        gamepadForwarder?.stop()
+        stopGamepadForwarder()
         sensors?.rawSampleSink = null
         pumpJob?.cancel()
         pumpJob = null
@@ -386,6 +391,16 @@ object TrackingController {
 
     private var gamepadForwarder: GamepadSensorForwarder? = null
     fun gamepadForwarder(): GamepadSensorForwarder? = gamepadForwarder
+
+    // The forwarder only exists on API 31+ (gated at init), but lint can't
+    // trace nullability across fields — every call funnels through these.
+    private fun startGamepadForwarder() {
+        if (android.os.Build.VERSION.SDK_INT >= 31) gamepadForwarder?.start()
+    }
+
+    private fun stopGamepadForwarder() {
+        if (android.os.Build.VERSION.SDK_INT >= 31) gamepadForwarder?.stop()
+    }
 
     private val mirrorJobs = mutableListOf<Job>()
 
@@ -564,9 +579,9 @@ object TrackingController {
             if (connected) announcePhoneHapticsOnly(e)
         }
         if (roleSendsGamepads()) {
-            if (_connection.value != ConnectionState.Disconnected) gamepadForwarder?.start()
+            if (_connection.value != ConnectionState.Disconnected) startGamepadForwarder()
         } else {
-            gamepadForwarder?.stop()
+            stopGamepadForwarder()
             bleManager?.let { mgr ->
                 for (entry in mgr.entries.value) {
                     if (entry.handle >= 0) mgr.disconnect(entry.address)

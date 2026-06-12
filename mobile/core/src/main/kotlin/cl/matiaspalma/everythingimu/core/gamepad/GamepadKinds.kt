@@ -10,6 +10,13 @@ import cl.matiaspalma.everythingimu.core.net.EimuProtocol
  */
 object GamepadKinds {
 
+    /**
+     * First handle for InputDevice-forwarded gamepads, clear of the BLE
+     * manager's 1+ range. Lives here (not in the forwarder) so minSdk
+     * callers can read it without tripping that class's API 31 gate.
+     */
+    const val HANDLE_BASE = 1000
+
     fun kindFor(vendorId: Int, productId: Int): Int = when (vendorId) {
         0x054C -> when (productId) {
             0x0CE6, 0x0DF2 -> EimuProtocol.KIND_DUALSENSE // DualSense / Edge

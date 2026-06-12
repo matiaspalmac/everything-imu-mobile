@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cl.matiaspalma.everythingimu.core.ble.BleDeviceManager
@@ -157,6 +158,7 @@ fun ControllersScreen() {
     }
 }
 
+@RequiresApi(31)
 @Composable
 private fun GamepadRow(pad: GamepadSensorForwarder.Entry, forwarder: GamepadSensorForwarder) {
     val t = tr
