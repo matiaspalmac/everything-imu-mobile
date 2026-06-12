@@ -408,7 +408,14 @@ private fun ConnectCard(
                     onClick = {
                         discovering = true
                         scope.launch {
-                            TrackingController.discoverDesktop()?.let { onHostChange(it) }
+                            val found = TrackingController.discoverDesktop()
+                            if (found != null) {
+                                // One tap: fill the host and connect right away.
+                                // onConnect reads the host state at call time,
+                                // so the change above is already visible to it.
+                                onHostChange(found)
+                                onConnect()
+                            }
                             discovering = false
                         }
                     },
