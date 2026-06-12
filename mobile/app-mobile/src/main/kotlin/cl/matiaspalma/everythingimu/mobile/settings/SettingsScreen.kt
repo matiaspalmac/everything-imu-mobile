@@ -95,6 +95,7 @@ fun SettingsScreen() {
     val tps by TrackingController.tps.collectAsStateWithLifecycle()
     val battery by TrackingController.batteryLevel.collectAsStateWithLifecycle()
     val sendRateHz by prefs.sendRateHz.collectAsStateWithLifecycle(initialValue = 100)
+    val rates by TrackingController.rates.collectAsStateWithLifecycle()
     val magOn by prefs.magEnabled.collectAsStateWithLifecycle(initialValue = true)
     val shakeOn by prefs.shakeRecenter.collectAsStateWithLifecycle(initialValue = true)
     val osRotationOn by prefs.useOsRotation.collectAsStateWithLifecycle(initialValue = false)
@@ -212,6 +213,15 @@ fun SettingsScreen() {
                 ),
             )
             Text(t.settings_send_rate_hint, style = MaterialTheme.typography.bodySmall, color = EimuPalette.FgMuted)
+            val sensorHz = rates.gyroHz.toInt()
+            if (sensorHz > 0) {
+                Text(
+                    "${t.settings_rate_streaming} ${minOf(sendRateHz, sensorHz)} Hz · ${t.settings_rate_sensor} $sensorHz Hz",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = EimuPalette.FgMuted,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
 
             SwitchRow(
                 label = t.settings_mag_enabled,
