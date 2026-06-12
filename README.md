@@ -1,8 +1,8 @@
 # everything-imu-mobile
 
 Turn an Android phone — and a Wear OS watch — into full-body SlimeVR trackers.
-No extra hardware: the device's own IMU is streamed to SlimeVR-Server over
-Wi-Fi, and VRChat haptics are sent back to the device's vibration motor.
+No extra hardware: the device's own IMU is streamed to the eimu desktop app
+over Wi-Fi, and haptics are sent back to the device's vibration motor.
 
 Companion to the desktop [**everything-imu**](https://github.com/matiaspalmac/everything-imu)
 bridge, which turns game controllers into trackers. This repo is the mobile half.
@@ -11,10 +11,26 @@ bridge, which turns game controllers into trackers. This repo is the mobile half
 
 ## Features
 
-**eimu hub mode (default)**
+**Phone tracker**
 - Streams the phone's raw IMU to the eimu desktop app over UDP, which runs
   sensor fusion and registers the phone as a tracker — one place for all your
   devices, mounting, and calibration.
+- **Auto-discover**: one tap finds the desktop on your LAN and connects — no
+  IP typing.
+- Live link health in the header: connection state, endpoint, and **round-trip
+  time**; the desktop measures real packet loss from sequence numbers.
+- Configurable send rate up to 400 Hz with a live *streaming / sensor*
+  readout, magnetometer toggle, and shake-to-recenter — applied live, no
+  restart.
+- Magnetometer figure-8 calibration wizard + automatic gyro-bias estimation.
+- Battery level reported to the desktop; notification quick actions for
+  **Recenter** and **Stop**.
+- Foreground service with wake + Wi-Fi locks, plus an OEM battery-optimization
+  helper so aggressive power managers don't kill tracking.
+- Auto-reconnect on Wi-Fi changes.
+- EN / ES localization.
+
+**Controller forwarding**
 - Forwards BLE controllers paired to the phone as **additional trackers**:
   Joy-Con 2, Switch 2 Pro Controller, and HOPX BLE pucks. Scan, tap connect,
   and they appear in the desktop device list.
@@ -23,34 +39,18 @@ bridge, which turns game controllers into trackers. This repo is the mobile half
   the system exposes — read through Android's InputDevice sensor API, with
   battery and rumble. Pair in system Bluetooth settings and they stream
   automatically while connected to the desktop.
-- Desktop-initiated haptics: rumble flows back to the phone's vibration motor
-  and to forwarded controllers.
-- Prefer the old direct path? Switch **Send tracking to → SlimeVR server** in
-  Settings.
+- Hub roles: phone + gamepads, phone only, or gamepads only.
 
-**Phone tracker (direct mode)**
-- Streams orientation to SlimeVR-Server over UDP — same protocol the desktop
-  bridge speaks, so the server treats it like any other tracker.
-- Native VQF sensor fusion (Rust core via JNI) with a pure-Kotlin Madgwick
-  fallback when the native library is unavailable.
-- Magnetometer figure-8 calibration wizard + automatic gyro-bias estimation.
-- Configurable send rate, magnetometer toggle, and shake-to-recenter — applied
-  live, no restart.
-- Battery level reported to the server; notification quick actions for
-  **Recenter** and **Stop**.
-- Foreground service with wake + Wi-Fi locks, plus an OEM battery-optimization
-  helper so aggressive power managers don't kill tracking.
-- Auto-reconnect on Wi-Fi changes.
-- EN / ES localization.
+**Haptics**
+- Desktop-initiated rumble flows to the phone's vibration motor and to
+  forwarded controllers; every pulse shows in the haptics log.
+- VRChat OSC → device vibration bridge (UDP `9001`).
 
 **Wear OS companion**
 - Runs standalone — the watch streams its own IMU as an independent tracker.
-- Auto-syncs the server address from the phone over the Wearable Data Layer,
+- Auto-syncs the desktop address from the phone over the Wearable Data Layer,
   or set the IP directly on the watch with a rotary/swipe wheel picker (works on
   AOSP / de-Googled watches with no Play Services — no keyboard, no companion).
-
-**Haptics**
-- VRChat OSC → device vibration bridge (UDP `9001`).
 
 ---
 
@@ -66,7 +66,8 @@ it first — Android refuses an in-place upgrade when the signing key changes.
 
 ### Quick start
 1. Install the phone APK, open it, grant sensor + notification permissions.
-2. Enter your PC's IP (where SlimeVR-Server runs) and start tracking.
+2. With the eimu desktop app running on your PC, tap **Auto-discover** — the
+   app finds it and connects (or type the PC's IP manually).
 3. Mount the phone on your body; calibrate; assign the tracker in SlimeVR.
 
 ---
