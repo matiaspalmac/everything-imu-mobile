@@ -31,8 +31,8 @@ android {
         applicationId = "cl.matiaspalma.everythingimu.wear"
         minSdk = 25
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 6
+        versionName = "1.0.6"
     }
 
     compileOptions {
