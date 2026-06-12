@@ -322,6 +322,9 @@ private fun HeaderRow(connection: ConnectionState, stats: ClientStats) {
             if (stats.targetEndpoint != null) {
                 Text("· ${stats.targetEndpoint}", color = EimuPalette.FgMuted, style = MaterialTheme.typography.bodySmall)
             }
+            if (connection == ConnectionState.Connected && stats.rttMs >= 0) {
+                Text("· ${stats.rttMs} ms", color = EimuPalette.FgMuted, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

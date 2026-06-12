@@ -74,6 +74,7 @@ class EimuClient(
 
     @Volatile private var sentCount: Long = 0
     @Volatile private var recvCount: Long = 0
+    @Volatile private var lastRttMs: Long = -1
 
     @Synchronized
     fun connect(host: String, port: Int) {
@@ -149,7 +150,7 @@ class EimuClient(
     private suspend fun helloLoop() = withContext(Dispatchers.IO) {
         var misses = 0
         while (scope.isActive && socket != null) {
-            submit { EimuProtocol.hello(uuid, hubName) }
+            submit { EimuProtocol.hello(uuid, hubName, tSendUs = System.nanoTime() / 1_000) }
             val ackAgeMs =
                 if (lastAckNanos == 0L) Long.MAX_VALUE
                 else (System.nanoTime() - lastAckNanos) / 1_000_000
@@ -197,6 +198,10 @@ class EimuClient(
                 when (val msg = EimuProtocol.parseIncoming(pkt.data, pkt.length)) {
                     is EimuProtocol.Incoming.HelloAck -> {
                         lastAckNanos = System.nanoTime()
+                        msg.echoUs?.let { echo ->
+                            lastRttMs = ((System.nanoTime() / 1_000 - echo) / 1_000)
+                                .coerceAtLeast(0)
+                        }
                         updateStats()
                     }
                     is EimuProtocol.Incoming.Rumble -> {
@@ -243,6 +248,7 @@ class EimuClient(
             packetsReceived = recvCount,
             lastHeartbeatAgeMs = ageMs,
             targetEndpoint = target ?: _stats.value.targetEndpoint,
+            rttMs = lastRttMs,
         )
     }
 

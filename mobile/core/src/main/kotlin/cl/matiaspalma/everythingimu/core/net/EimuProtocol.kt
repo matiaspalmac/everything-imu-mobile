@@ -43,7 +43,8 @@ object EimuProtocol {
     const val RESET_FULL = 1
 
     sealed interface Incoming {
-        data object HelloAck : Incoming
+        /** [echoUs] = our hello timestamp echoed back (null from old desktops). */
+        data class HelloAck(val echoUs: Long?) : Incoming
         data class Rumble(val handle: Int, val intensity: Float) : Incoming
     }
 
@@ -55,15 +56,18 @@ object EimuProtocol {
         return buf
     }
 
-    fun hello(uuid: ByteArray, name: String): ByteArray {
+    fun hello(uuid: ByteArray, name: String, tSendUs: Long? = null): ByteArray {
         require(uuid.size == 16) { "uuid must be 16 bytes" }
         val nameBytes = name.toByteArray(Charsets.UTF_8).let {
             if (it.size > 64) it.copyOf(64) else it
         }
-        val buf = header(MSG_HELLO, 16 + 1 + nameBytes.size)
+        val buf = header(MSG_HELLO, 16 + 1 + nameBytes.size + (if (tSendUs != null) 8 else 0))
         buf.put(uuid)
         buf.put(nameBytes.size.toByte())
         buf.put(nameBytes)
+        // Trailing monotonic timestamp for RTT: old desktops ignore the extra
+        // bytes, new ones echo it back at the end of the ack.
+        if (tSendUs != null) buf.putLong(tSendUs)
         return buf.array()
     }
 
@@ -174,7 +178,15 @@ object EimuProtocol {
         val buf = ByteBuffer.wrap(data, 0, length).order(ByteOrder.LITTLE_ENDIAN)
         buf.position(5)
         return when (buf.get().toInt()) {
-            MSG_HELLO_ACK -> Incoming.HelloAck
+            MSG_HELLO_ACK -> {
+                val echo = if (length >= 7 + 8) {
+                    buf.position(7)
+                    buf.long
+                } else {
+                    null
+                }
+                Incoming.HelloAck(echo)
+            }
             MSG_RUMBLE -> {
                 if (length < 6 + 6) return null
                 val handle = buf.short.toInt() and 0xFFFF

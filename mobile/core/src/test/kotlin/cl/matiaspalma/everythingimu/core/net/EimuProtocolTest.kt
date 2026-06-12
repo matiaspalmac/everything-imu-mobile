@@ -140,9 +140,30 @@ class EimuProtocolTest {
     }
 
     @Test
+    fun helloCarriesTrailingTimestampAndAckEchoParses() {
+        val pkt = EimuProtocol.hello(ByteArray(16), "Px", tSendUs = 777L)
+        val tail = pkt.copyOfRange(pkt.size - 8, pkt.size)
+        assertEquals(777L, ByteBuffer.wrap(tail).order(ByteOrder.LITTLE_ENDIAN).long)
+
+        // ACK with echo: header + server version + echo u64.
+        val ack = le {
+            put(byteArrayOf(0x45, 0x49, 0x4D, 0x55, 0x01, 0x02, 0x01))
+            putLong(777L)
+        }
+        assertEquals(
+            EimuProtocol.Incoming.HelloAck(echoUs = 777L),
+            EimuProtocol.parseIncoming(ack, ack.size),
+        )
+
+        // Hello without timestamp keeps the v1 layout exactly.
+        val legacyHello = EimuProtocol.hello(ByteArray(16), "Px")
+        assertEquals(6 + 16 + 1 + 2, legacyHello.size)
+    }
+
+    @Test
     fun parsesHelloAckAndRumble() {
         assertEquals(
-            EimuProtocol.Incoming.HelloAck,
+            EimuProtocol.Incoming.HelloAck(echoUs = null),
             EimuProtocol.parseIncoming(byteArrayOf(0x45, 0x49, 0x4D, 0x55, 0x01, 0x02, 0x01), 7),
         )
         val rumble = le {

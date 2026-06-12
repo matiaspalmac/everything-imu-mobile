@@ -7,6 +7,8 @@ data class ClientStats(
     val packetsReceived: Long = 0,
     val lastHeartbeatAgeMs: Long = -1,
     val targetEndpoint: String? = null,
+    /** Hello→ack round trip in ms; -1 until the first echoed ack arrives. */
+    val rttMs: Long = -1,
 )
 
 object DeviceIdentity {
