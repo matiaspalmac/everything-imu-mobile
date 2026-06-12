@@ -90,6 +90,31 @@ class EimuProtocolTest {
     }
 
     @Test
+    fun imu2CarriesSeqAfterHandle() {
+        val pkt = EimuProtocol.imu2(
+            handle = 0,
+            seq = 41,
+            timestampUs = 1_000L,
+            gyro = floatArrayOf(0.1f, 0.2f, 0.3f),
+            accel = floatArrayOf(9.8f, 0f, 0.1f),
+            mag = null,
+        )
+        val expected = le {
+            put(byteArrayOf(0x45, 0x49, 0x4D, 0x55, 0x01, 0x09))
+            putShort(0)
+            putShort(41)
+            put(1)
+            putLong(1_000L)
+            putFloat(0.1f); putFloat(0.2f); putFloat(0.3f)
+            putFloat(9.8f); putFloat(0f); putFloat(0.1f)
+            put(0)
+            putFloat(0f); putFloat(0f); putFloat(0f)
+        }
+        assertArrayEquals(expected, pkt)
+        assertEquals(6 + 2 + 2 + 1 + 45, pkt.size)
+    }
+
+    @Test
     fun batteryButtonRemoveLayout() {
         assertArrayEquals(
             le {

@@ -23,6 +23,9 @@ object EimuProtocol {
     const val MSG_BUTTON = 0x07
     const val MSG_RUMBLE = 0x08
 
+    /** MSG_IMU plus a wrapping `seq` u16 after `handle`, for loss measurement. */
+    const val MSG_IMU2 = 0x09
+
     const val KIND_PHONE = 1
     const val KIND_WATCH = 2
     const val KIND_JOYCON2_L = 3
@@ -107,6 +110,32 @@ object EimuProtocol {
     ): ByteArray {
         val buf = header(MSG_IMU, 2 + 1 + 45)
         buf.putShort(handle.toShort())
+        buf.put(1)
+        buf.putLong(timestampUs)
+        buf.putFloat(gyro[0]); buf.putFloat(gyro[1]); buf.putFloat(gyro[2])
+        buf.putFloat(accel[0]); buf.putFloat(accel[1]); buf.putFloat(accel[2])
+        if (mag != null) {
+            buf.put(1)
+            buf.putFloat(mag[0]); buf.putFloat(mag[1]); buf.putFloat(mag[2])
+        } else {
+            buf.put(0)
+            buf.putFloat(0f); buf.putFloat(0f); buf.putFloat(0f)
+        }
+        return buf.array()
+    }
+
+    /** Single-sample IMU message with a wrapping send counter (v2 of MSG_IMU). */
+    fun imu2(
+        handle: Int,
+        seq: Int,
+        timestampUs: Long,
+        gyro: FloatArray,
+        accel: FloatArray,
+        mag: FloatArray?,
+    ): ByteArray {
+        val buf = header(MSG_IMU2, 2 + 2 + 1 + 45)
+        buf.putShort(handle.toShort())
+        buf.putShort(seq.toShort())
         buf.put(1)
         buf.putLong(timestampUs)
         buf.putFloat(gyro[0]); buf.putFloat(gyro[1]); buf.putFloat(gyro[2])

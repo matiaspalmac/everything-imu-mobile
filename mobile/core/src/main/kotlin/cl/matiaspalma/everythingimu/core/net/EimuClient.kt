@@ -57,6 +57,9 @@ class EimuClient(
 
     private val devices = ConcurrentHashMap<Int, AnnouncedDevice>()
 
+    /** Wrapping per-handle send counters for MSG_IMU2 loss measurement. */
+    private val seqCounters = ConcurrentHashMap<Int, java.util.concurrent.atomic.AtomicInteger>()
+
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
@@ -129,7 +132,10 @@ class EimuClient(
     }
 
     fun sendImu(handle: Int, timestampUs: Long, gyro: FloatArray, accel: FloatArray, mag: FloatArray?) {
-        submit { EimuProtocol.imu(handle, timestampUs, gyro, accel, mag) }
+        val seq = seqCounters
+            .getOrPut(handle) { java.util.concurrent.atomic.AtomicInteger(0) }
+            .getAndIncrement() and 0xFFFF
+        submit { EimuProtocol.imu2(handle, seq, timestampUs, gyro, accel, mag) }
     }
 
     fun sendBattery(handle: Int, fraction: Float, charging: Boolean) {
