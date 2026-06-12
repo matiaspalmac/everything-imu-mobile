@@ -68,6 +68,12 @@ class GamepadSensorForwarder(
     private val forwarded = HashMap<Int, ForwardedPad>()
     private val nextHandle = AtomicInteger(HANDLE_BASE)
 
+    // Stable handle per physical pad. A monotonic counter would mint a fresh
+    // handle on every forward toggle or app reconnect, registering the same
+    // controller as a brand-new device on the desktop each time — and desktop
+    // haptics rules bound to the old handle would rumble into the void.
+    private val descriptorHandles = HashMap<String, Int>()
+
     /** One streaming pad: its sensor listeners + latest accel for pairing. */
     private inner class ForwardedPad(
         val device: InputDevice,
@@ -163,7 +169,9 @@ class GamepadSensorForwarder(
         } else {
             DEFAULT_RATE_HZ
         }
-        val handle = nextHandle.getAndIncrement()
+        val handle = synchronized(descriptorHandles) {
+            descriptorHandles.getOrPut(device.descriptor) { nextHandle.getAndIncrement() }
+        }
         val pad = ForwardedPad(device, handle, rate)
         sm.registerListener(pad, accel, SensorManager.SENSOR_DELAY_FASTEST, handler)
         sm.registerListener(pad, gyro, SensorManager.SENSOR_DELAY_FASTEST, handler)
