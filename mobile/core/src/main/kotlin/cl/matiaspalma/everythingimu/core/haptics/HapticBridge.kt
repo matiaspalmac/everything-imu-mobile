@@ -159,7 +159,25 @@ class HapticBridge(context: Context) {
                 } else {
                     VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
                 }
-                vib.vibrate(effect)
+                // Attribute the buzz as media/game rumble. A bare vibrate()
+                // defaults to USAGE_TOUCH, which the system drops with
+                // IGNORED_FOR_SETTINGS whenever the user has touch haptic
+                // feedback disabled (MIUI ships it off).
+                if (Build.VERSION.SDK_INT >= 33) {
+                    vib.vibrate(
+                        effect,
+                        VibrationAttributes.createForUsage(VibrationAttributes.USAGE_MEDIA),
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    vib.vibrate(
+                        effect,
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_GAME)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build(),
+                    )
+                }
             } else {
                 @Suppress("DEPRECATION")
                 vib.vibrate(durationMs)
