@@ -364,6 +364,8 @@ private fun ConnectCard(
     onDisconnect: () -> Unit,
 ) {
     val t = tr
+    val scope = rememberCoroutineScope()
+    var discovering by remember { mutableStateOf(false) }
     EimuCard {
         CardTitle(t.home_connection)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -397,6 +399,24 @@ private fun ConnectCard(
                 modifier = Modifier.weight(1f),
             ) {
                 Text(if (connected) t.action_disconnect else t.action_connect)
+            }
+            if (!connected) {
+                OutlinedButton(
+                    onClick = {
+                        discovering = true
+                        scope.launch {
+                            TrackingController.discoverDesktop()?.let { onHostChange(it) }
+                            discovering = false
+                        }
+                    },
+                    enabled = !discovering,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        if (discovering) "…" else t.action_discover,
+                        color = EimuPalette.Accent,
+                    )
+                }
             }
         }
         if (!lastError.isNullOrBlank()) {

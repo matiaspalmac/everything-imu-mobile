@@ -21,6 +21,7 @@ import cl.matiaspalma.everythingimu.core.net.ClientStats
 import cl.matiaspalma.everythingimu.core.net.ConnectionState
 import cl.matiaspalma.everythingimu.core.net.DeviceIdentity
 import cl.matiaspalma.everythingimu.core.net.EimuClient
+import cl.matiaspalma.everythingimu.core.net.EimuDiscovery
 import cl.matiaspalma.everythingimu.core.net.EimuProtocol
 import cl.matiaspalma.everythingimu.core.net.WifiBinder
 import cl.matiaspalma.everythingimu.core.prefs.AppPrefs
@@ -351,6 +352,14 @@ object TrackingController {
             announcePhoneHapticsOnly(e)
         }
         if (roleSendsGamepads()) gamepadForwarder?.start()
+    }
+
+    /** Broadcast HELLO on the LAN; returns the desktop's IP or null. */
+    suspend fun discoverDesktop(): String? {
+        val uuid = prefs?.deviceUuidOrCreate().orEmpty().ifBlank { DEFAULT_UUID }
+        val name = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
+            .trim().ifBlank { "Android" }
+        return EimuDiscovery.discover(EimuClient.uuidBytes(uuid), name)
     }
 
     fun disconnect() {
