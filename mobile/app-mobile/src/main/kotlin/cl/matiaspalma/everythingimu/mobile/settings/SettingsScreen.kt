@@ -98,7 +98,6 @@ fun SettingsScreen() {
     val magOn by prefs.magEnabled.collectAsStateWithLifecycle(initialValue = true)
     val shakeOn by prefs.shakeRecenter.collectAsStateWithLifecycle(initialValue = true)
     val osRotationOn by prefs.useOsRotation.collectAsStateWithLifecycle(initialValue = false)
-    val targetMode by prefs.targetMode.collectAsStateWithLifecycle(initialValue = "eimu")
     val hubRole by prefs.hubRole.collectAsStateWithLifecycle(initialValue = "tracker")
     val t = tr
 
@@ -120,13 +119,7 @@ fun SettingsScreen() {
         scope.launch {
             diagnosing = true
             diagnostics = withContext(Dispatchers.IO) {
-                NetworkDiagnostics.run(
-                    ctx,
-                    host.trim(),
-                    port.toIntOrNull() ?: 6969,
-                    TrackingController.deviceMac(),
-                    eimuMode = targetMode == "eimu",
-                )
+                NetworkDiagnostics.run(ctx, host.trim(), port.toIntOrNull() ?: 6969)
             }
             diagnosing = false
         }
@@ -151,36 +144,18 @@ fun SettingsScreen() {
             Text(t.settings_autosave, style = MaterialTheme.typography.bodySmall, color = EimuPalette.FgMuted)
         }
 
-        SectionHeader(t.settings_target_mode)
+        SectionHeader(t.settings_hub_role)
         EimuCard {
-            CardTitle(t.settings_target_mode)
+            CardTitle(t.settings_hub_role)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                ThemeOption(t.settings_target_eimu, t.settings_target_hint, selected = targetMode == "eimu") {
-                    scope.launch { prefs.setTargetMode("eimu") }
+                ThemeOption(t.settings_hub_role_tracker, t.settings_hub_role_tracker_hint, selected = hubRole == "tracker") {
+                    scope.launch { prefs.setHubRole("tracker") }
                 }
-                ThemeOption(t.settings_target_slimevr, t.settings_server_hint, selected = targetMode == "slimevr") {
-                    scope.launch { prefs.setTargetMode("slimevr") }
+                ThemeOption(t.settings_hub_role_gamepads, t.settings_hub_role_gamepads_hint, selected = hubRole == "gamepads") {
+                    scope.launch { prefs.setHubRole("gamepads") }
                 }
-            }
-            if (targetMode == "eimu") {
-                Text(
-                    t.settings_hub_role.uppercase(),
-                    color = EimuPalette.FgMuted,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.0.sp,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    ThemeOption(t.settings_hub_role_tracker, t.settings_hub_role_tracker_hint, selected = hubRole == "tracker") {
-                        scope.launch { prefs.setHubRole("tracker") }
-                    }
-                    ThemeOption(t.settings_hub_role_gamepads, t.settings_hub_role_gamepads_hint, selected = hubRole == "gamepads") {
-                        scope.launch { prefs.setHubRole("gamepads") }
-                    }
-                    ThemeOption(t.settings_hub_role_both, t.settings_hub_role_both_hint, selected = hubRole == "both") {
-                        scope.launch { prefs.setHubRole("both") }
-                    }
+                ThemeOption(t.settings_hub_role_both, t.settings_hub_role_both_hint, selected = hubRole == "both") {
+                    scope.launch { prefs.setHubRole("both") }
                 }
             }
         }
@@ -417,7 +392,7 @@ fun SettingsScreen() {
             CardTitle(t.settings_about)
             AboutRow(t.settings_version, BuildConfig.VERSION_NAME, mono = true)
             AboutRow(t.settings_license, "MIT", mono = false)
-            AboutRow(t.settings_protocol, "SlimeVR UDP", mono = false)
+            AboutRow(t.settings_protocol, "eimu UDP", mono = false)
             AboutRow(t.settings_repo, "matiaspalmac/everything-imu", mono = true)
             AboutRow(t.settings_uuid, uuid.ifBlank { "—" }, mono = true)
             Text(t.settings_about_body, style = MaterialTheme.typography.bodySmall, color = EimuPalette.FgMuted)

@@ -79,15 +79,7 @@ fun ControllersScreen() {
     ) {
         Text(t.controllers_title, style = MaterialTheme.typography.titleLarge, color = EimuPalette.FgPrimary)
 
-        if (TrackingController.targetMode != "eimu") {
-            EimuCard {
-                Text(
-                    t.controllers_requires_eimu,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = EimuPalette.Warn,
-                )
-            }
-        } else if (TrackingController.hubRole == "tracker") {
+        if (TrackingController.hubRole == "tracker") {
             EimuCard {
                 Text(
                     t.controllers_role_disabled,

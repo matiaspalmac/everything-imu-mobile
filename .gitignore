@@ -21,6 +21,9 @@ keystore.properties
 __pycache__/
 *.pyc
 
+# Local docs
+docs/
+
 # IDE / OS
 .DS_Store
 Thumbs.db

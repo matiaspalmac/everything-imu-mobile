@@ -12,7 +12,7 @@ import android.util.Log
  * Force the process to route traffic through Wi-Fi rather than Bluetooth or LTE.
  *
  * Wear OS in particular defaults to a Bluetooth proxy network when paired with
- * a phone — that proxy can't reach the SlimeVR Server on the LAN. Binding the
+ * a phone — that proxy can't reach the eimu desktop on the LAN. Binding the
  * process to a Wi-Fi network ensures our UDP sockets go out the right NIC.
  */
 class WifiBinder(context: Context) {
@@ -29,7 +29,7 @@ class WifiBinder(context: Context) {
         // WAN, or a Wear Wi-Fi that drops "validated internet" when the screen
         // turns off, would otherwise stop matching, unbind the process, and let
         // UDP fall back to the Bluetooth companion proxy that can't reach the
-        // SlimeVR server. Matches moveTrackVR's request.
+        // desktop.
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .build()

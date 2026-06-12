@@ -59,7 +59,6 @@ import cl.matiaspalma.everythingimu.core.fusion.Quaternion
 import cl.matiaspalma.everythingimu.core.fusion.toEuler
 import cl.matiaspalma.everythingimu.core.net.ClientStats
 import cl.matiaspalma.everythingimu.core.net.ConnectionState
-import cl.matiaspalma.everythingimu.core.net.SlimeVrClient
 import cl.matiaspalma.everythingimu.core.prefs.AppPrefs
 import cl.matiaspalma.everythingimu.core.sensors.SensorSample
 import cl.matiaspalma.everythingimu.core.tracking.TrackingController
@@ -80,10 +79,8 @@ import cl.matiaspalma.everythingimu.mobile.theme.EimuTheme
 import cl.matiaspalma.everythingimu.mobile.theme.ThemeMode
 import cl.matiaspalma.everythingimu.mobile.theme.applyThemeMode
 import cl.matiaspalma.everythingimu.mobile.theme.SectionHeader
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.PI
 
 class MainActivity : ComponentActivity() {
@@ -274,16 +271,6 @@ private fun HomeScreen() {
                 TrackingController.disconnect()
                 TrackingController.stop(context)
             },
-            onDiscover = {
-                val p = port.toIntOrNull() ?: 6969
-                scope.launch {
-                    val found = withContext(Dispatchers.IO) {
-                        val mac = TrackingController.deviceMac()
-                        SlimeVrClient.discover(context, mac, p)
-                    }
-                    if (found != null) host = found.hostAddress ?: host
-                }
-            },
         )
 
         CheckRow(
@@ -375,7 +362,6 @@ private fun ConnectCard(
     onPortChange: (String) -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onDiscover: () -> Unit,
 ) {
     val t = tr
     EimuCard {
@@ -412,10 +398,6 @@ private fun ConnectCard(
             ) {
                 Text(if (connected) t.action_disconnect else t.action_connect)
             }
-            OutlinedButton(
-                onClick = onDiscover,
-                modifier = Modifier.weight(1f),
-            ) { Text(t.action_discover) }
         }
         if (!lastError.isNullOrBlank()) {
             Text(lastError, style = MaterialTheme.typography.bodySmall, color = EimuPalette.Danger)

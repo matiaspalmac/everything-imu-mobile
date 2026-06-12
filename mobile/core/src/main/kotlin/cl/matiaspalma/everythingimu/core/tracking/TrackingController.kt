@@ -1,8 +1,6 @@
 package cl.matiaspalma.everythingimu.core.tracking
 
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -21,9 +19,9 @@ import cl.matiaspalma.everythingimu.core.fusion.normalized
 import cl.matiaspalma.everythingimu.core.fusion.VqfEngine
 import cl.matiaspalma.everythingimu.core.net.ClientStats
 import cl.matiaspalma.everythingimu.core.net.ConnectionState
+import cl.matiaspalma.everythingimu.core.net.DeviceIdentity
 import cl.matiaspalma.everythingimu.core.net.EimuClient
 import cl.matiaspalma.everythingimu.core.net.EimuProtocol
-import cl.matiaspalma.everythingimu.core.net.SlimeVrClient
 import cl.matiaspalma.everythingimu.core.net.WifiBinder
 import cl.matiaspalma.everythingimu.core.prefs.AppPrefs
 import cl.matiaspalma.everythingimu.core.sensors.SensorRates
@@ -53,19 +51,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 object TrackingController {
 
     private var sensors: SensorRepository? = null
-    private var client: SlimeVrClient? = null
-    // Completes once the client is constructed (after the async UUID/mac load in
+    private var eimuClient: EimuClient? = null
+    // Completes once the client is constructed (after the async UUID load in
     // ensureInit). connect() awaits this so a connect issued during cold start —
     // before the init coroutine finishes — no longer silently no-ops.
-    private val clientReady = CompletableDeferred<SlimeVrClient>()
-    private var eimuClient: EimuClient? = null
     private val eimuReady = CompletableDeferred<EimuClient>()
 
-    /** "eimu" (desktop hub, default) or "slimevr" (legacy owoTrack-direct). */
-    @Volatile var targetMode: String = "eimu"
-        private set
-
-    /** Hub role in eimu mode: "tracker" (default), "gamepads", or "both". */
+    /** Hub role: "tracker" (default), "gamepads", or "both". */
     @Volatile var hubRole: String = "tracker"
         private set
 
@@ -187,11 +179,6 @@ object TrackingController {
             calibration = appPrefs.loadCalibration()
             repo.applyCalibration(calibration.gyroBias, calibration.mag)
             val uuid = appPrefs.deviceUuidOrCreate()
-            val mac = SlimeVrClient.macFromUuid(uuid)
-            val c = SlimeVrClient(mac)
-            client = c
-            clientReady.complete(c)
-            mirror(c.state, c.stats, c.lastError)
             val deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim()
             val e = EimuClient(EimuClient.uuidBytes(uuid), deviceName.ifBlank { "Android" })
             e.onRumble = { handle, intensity ->
@@ -200,8 +187,8 @@ object TrackingController {
             }
             eimuClient = e
             eimuReady.complete(e)
+            mirror(e.state, e.stats, e.lastError)
         }
-        scope.launch { appPrefs.targetMode.collect { targetMode = it } }
         scope.launch {
             appPrefs.hubRole.collect { role ->
                 val prev = hubRole
@@ -235,12 +222,12 @@ object TrackingController {
             .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val state = client?.state?.value ?: return
+                val state = _connection.value
                 if (state == ConnectionState.Failed || state == ConnectionState.Reconnecting) {
                     scope.launch {
                         val h = savedHost()
                         val p = savedPort()
-                        if (h.isNotBlank()) client?.connect(h, p)
+                        if (h.isNotBlank()) connect(h, p)
                     }
                 }
             }
@@ -255,7 +242,6 @@ object TrackingController {
             var prev = 0L
             while (true) {
                 delay(1000)
-                // _clientStats mirrors whichever client (eimu/slimevr) is active.
                 val cur = _clientStats.value.packetsSent
                 _tps.value = (cur - prev).coerceAtLeast(0L).toFloat()
                 prev = cur
@@ -270,25 +256,12 @@ object TrackingController {
             while (true) {
                 val pct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
                 _batteryLevel.value = pct
-                if (pct in 0..100) {
-                    val voltage = readBatteryVoltage(app)
-                    if (targetMode == "eimu") {
-                        if (roleSendsPhone()) {
-                            eimuClient?.sendBattery(PHONE_HANDLE, pct / 100f, charging = false)
-                        }
-                    } else {
-                        client?.sendBattery(voltage, pct / 100f)
-                    }
+                if (pct in 0..100 && roleSendsPhone()) {
+                    eimuClient?.sendBattery(PHONE_HANDLE, pct / 100f, charging = false)
                 }
                 delay(30_000)
             }
         }
-    }
-
-    private fun readBatteryVoltage(app: Context): Float {
-        val intent = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val mv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1) ?: -1
-        return if (mv > 0) mv / 1000f else 3.7f
     }
 
     private fun installShakeDetector() {
@@ -363,33 +336,24 @@ object TrackingController {
     }
 
     suspend fun connect(host: String, port: Int) {
-        if (targetMode == "eimu") {
-            // Await the client if the init coroutine hasn't constructed it yet.
-            val e = eimuClient ?: eimuReady.await()
-            // The persisted port predates hub mode (SlimeVR default 6969);
-            // substitute the eimu listener port unless the user typed a custom one.
-            val effectivePort = if (port == 6969) EimuProtocol.DEFAULT_PORT else port
-            withContext(Dispatchers.IO) { e.connect(host, effectivePort) }
-            mirror(e.state, e.stats, e.lastError)
-            prefs?.setServer(host, port)
-            if (roleSendsPhone()) {
-                announcePhone(e)
-                startRawPump(e)
-            } else {
-                announcePhoneHapticsOnly(e)
-            }
-            if (roleSendsGamepads()) gamepadForwarder?.start()
+        // Await the client if the init coroutine hasn't constructed it yet.
+        val e = eimuClient ?: eimuReady.await()
+        // The persisted port may predate hub mode (SlimeVR default 6969);
+        // substitute the eimu listener port unless the user typed a custom one.
+        val effectivePort = if (port == 6969) EimuProtocol.DEFAULT_PORT else port
+        withContext(Dispatchers.IO) { e.connect(host, effectivePort) }
+        mirror(e.state, e.stats, e.lastError)
+        prefs?.setServer(host, port)
+        if (roleSendsPhone()) {
+            announcePhone(e)
+            startRawPump(e)
         } else {
-            val c = client ?: clientReady.await()
-            withContext(Dispatchers.IO) { c.connect(host, port) }
-            mirror(c.state, c.stats, c.lastError)
-            prefs?.setServer(host, port)
-            startQuaternionPump()
+            announcePhoneHapticsOnly(e)
         }
+        if (roleSendsGamepads()) gamepadForwarder?.start()
     }
 
     fun disconnect() {
-        client?.disconnect()
         eimuClient?.disconnect()
         gamepadForwarder?.stop()
         sensors?.rawSampleSink = null
@@ -397,17 +361,13 @@ object TrackingController {
         pumpJob = null
     }
 
-    /** Recenter: BUTTON to eimu hub, or owoTrack BUTTON_PUSHED (60) direct. */
+    /** Recenter: BUTTON message to the eimu hub. */
     fun sendRecenter() {
-        if (targetMode == "eimu") {
-            if (roleSendsPhone()) eimuClient?.sendButton(PHONE_HANDLE, EimuProtocol.RESET_YAW)
-            // Local feedback: the desktop resets its own fusion + SlimeVR, but
-            // the on-phone orientation card runs a separate VQF — zero it too
-            // so the user sees the recenter take effect immediately.
-            autoMount()
-        } else {
-            client?.sendButtonPushed()
-        }
+        if (roleSendsPhone()) eimuClient?.sendButton(PHONE_HANDLE, EimuProtocol.RESET_YAW)
+        // Local feedback: the desktop resets its own fusion + SlimeVR, but
+        // the on-phone orientation card runs a separate VQF — zero it too
+        // so the user sees the recenter take effect immediately.
+        autoMount()
     }
 
     fun eimuClientOrNull(): EimuClient? = eimuClient
@@ -508,10 +468,8 @@ object TrackingController {
                 lastSendNanos = now
             }
         }
-        // UI-only mirror: the fusion card reads mountedQuaternion, which the
-        // SlimeVR-direct pump normally feeds. In hub mode the desktop owns
-        // fusion, but the local VQF keeps running — surface it at ~60 Hz so
-        // the card stays live.
+        // UI-only mirror: the desktop owns fusion, but the local VQF keeps
+        // running — surface it at ~60 Hz so the orientation card stays live.
         pumpJob = scope.launch {
             var lastUiNanos = 0L
             repo.quaternion.collect { q ->
@@ -551,18 +509,14 @@ object TrackingController {
 
     suspend fun deviceMac(): ByteArray {
         val uuid = prefs?.deviceUuidOrCreate().orEmpty().ifBlank { DEFAULT_UUID }
-        return SlimeVrClient.macFromUuid(uuid)
+        return DeviceIdentity.macFromUuid(uuid)
     }
 
     internal fun onServiceStart() {
         wifiBinder?.bindToWifi()
         sensors?.start()
         _running.value = true
-        if (targetMode == "eimu") {
-            if (roleSendsPhone()) eimuClient?.let { startRawPump(it) }
-        } else {
-            startQuaternionPump()
-        }
+        if (roleSendsPhone()) eimuClient?.let { startRawPump(it) }
     }
 
     /**
@@ -570,7 +524,6 @@ object TrackingController {
      * tracker and the gamepad forwarder without touching the socket.
      */
     private fun applyHubRole() {
-        if (targetMode != "eimu") return
         val e = eimuClient ?: return
         val connected =
             _connection.value == ConnectionState.Connected || _connection.value == ConnectionState.Connecting
@@ -611,34 +564,6 @@ object TrackingController {
         pumpJob = null
         mountOffset = Quaternion.IDENTITY
         _mountedQuaternion.value = Quaternion.IDENTITY
-    }
-
-    private fun startQuaternionPump() {
-        if (pumpJob != null) return
-        val flow = sensors?.quaternion ?: return
-        pumpJob = scope.launch {
-            var lastSendNanos = 0L
-            var lastUiNanos = 0L
-            flow.collect { q ->
-                val mounted = applyMountOffset(q)
-                val now = System.nanoTime()
-                // UI quaternion at ~60 Hz: the flow emits at gyro rate, and
-                // pushing every sample makes the fusion card recompose at sensor
-                // rate. The network send below keeps its own (sendRateHz) cadence.
-                if (now - lastUiNanos >= UI_QUAT_INTERVAL_NANOS) {
-                    _mountedQuaternion.value = mounted
-                    lastUiNanos = now
-                }
-                val intervalNs = 1_000_000_000L / sendRateHz.coerceAtLeast(20)
-                if (now - lastSendNanos >= intervalNs) {
-                    client?.sendRotation(floatArrayOf(mounted.w, mounted.x, mounted.y, mounted.z))
-                    // owoTrack-compat: also stream linear acceleration so SlimeVR
-                    // shows accel data (parity with owoTrack).
-                    sensors?.latestLinearAccel()?.let { client?.sendAccel(it) }
-                    lastSendNanos = now
-                }
-            }
-        }
     }
 
     fun autoMount(): Boolean {

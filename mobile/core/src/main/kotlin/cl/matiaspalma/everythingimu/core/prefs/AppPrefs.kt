@@ -29,16 +29,10 @@ class AppPrefs(context: Context) {
     val serviceWanted: Flow<Boolean> = store.data.map { it[KEY_SERVICE_WANTED] ?: false }
     val serverHost: Flow<String> = store.data.map { it[KEY_HOST] ?: "" }
     val serverPort: Flow<Int> = store.data.map { it[KEY_PORT] ?: 6969 }
-    
-    /**
-     * Where tracking is sent: "eimu" (desktop hub, default — centralizes
-     * fusion/devices) or "slimevr" (legacy owoTrack-direct).
-     */
-    val targetMode: Flow<String> = store.data.map { it[KEY_TARGET_MODE] ?: "eimu" }
 
     /**
-     * What the hub streams in eimu mode: "tracker" (default — phone IMU
-     * only), "gamepads" (controllers only, phone is not a tracker), or
+     * What the hub streams: "tracker" (default — phone IMU only),
+     * "gamepads" (controllers only, phone is not a tracker), or
      * "both" (phone tracker + forwarded gamepads).
      */
     val hubRole: Flow<String> = store.data.map { it[KEY_HUB_ROLE] ?: "tracker" }
@@ -99,10 +93,6 @@ class AppPrefs(context: Context) {
             it[KEY_HOST] = host
             it[KEY_PORT] = port
         }
-    }
-
-    suspend fun setTargetMode(mode: String) {
-        store.edit { it[KEY_TARGET_MODE] = mode }
     }
 
     suspend fun setHubRole(role: String) {
@@ -195,7 +185,6 @@ class AppPrefs(context: Context) {
         private val KEY_MAG_ENABLED = booleanPreferencesKey("mag_enabled")
         private val KEY_SHAKE_RECENTER = booleanPreferencesKey("shake_recenter")
         private val KEY_OS_ROTATION = booleanPreferencesKey("use_os_rotation")
-        private val KEY_TARGET_MODE = stringPreferencesKey("target_mode")
         private val KEY_HUB_ROLE = stringPreferencesKey("hub_role")
         private val KEY_AUTOSTART_HAPTICS = booleanPreferencesKey("autostart_haptics")
         private val KEY_GYRO_BIAS_X = floatPreferencesKey("gyro_bias_x")

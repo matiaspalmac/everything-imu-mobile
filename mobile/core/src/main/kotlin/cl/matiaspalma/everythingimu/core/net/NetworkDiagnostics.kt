@@ -21,10 +21,10 @@ data class DiagnosticsReport(
 )
 
 /**
- * One-shot network sanity check. The owoTrack discord is full of users
- * stuck on "Connection failed" because their phone joined a guest network,
- * the PC was on Ethernet behind a different subnet, or the firewall blocked
- * UDP. This surfaces those conditions in plain language.
+ * One-shot network sanity check. Most "Connection failed" reports trace back
+ * to the phone joining a guest network, the PC sitting on Ethernet behind a
+ * different subnet, or the firewall blocking UDP. This surfaces those
+ * conditions in plain language.
  */
 object NetworkDiagnostics {
 
@@ -38,8 +38,6 @@ object NetworkDiagnostics {
         context: Context,
         host: String,
         port: Int,
-        mac: ByteArray,
-        eimuMode: Boolean = false,
     ): DiagnosticsReport {
         val cm = context.getSystemService<ConnectivityManager>()
         val wifi = context.getSystemService<WifiManager>()
@@ -55,18 +53,16 @@ object NetworkDiagnostics {
             "${ip and 0xff}.${(ip shr 8) and 0xff}.${(ip shr 16) and 0xff}.${(ip shr 24) and 0xff}"
         }
 
-        // Probe whichever server the user is actually targeting: the eimu
-        // desktop hub (HELLO/ACK on its own port) or SlimeVR (handshake).
-        val effectivePort = if (eimuMode && port == 6969) EimuProtocol.DEFAULT_PORT else port
+        // Probe the eimu desktop hub: HELLO out, HELLO_ACK back. The legacy
+        // SlimeVR default port maps to the hub port, same as connect() does.
+        val effectivePort = if (port == 6969) EimuProtocol.DEFAULT_PORT else port
         val (hostReachable, serverResponded) = if (host.isBlank()) {
             false to false
-        } else if (eimuMode) {
-            probeEimu(host, effectivePort)
         } else {
-            probeServer(host, port, mac)
+            probeEimu(host, effectivePort)
         }
 
-        val serverName = if (eimuMode) "the eimu desktop app" else "SlimeVR Server"
+        val serverName = "the eimu desktop app"
         val hints = buildList {
             if (!wifiConnected) add("Phone is not on Wi-Fi. Tracking needs LAN, mobile data won't reach the PC.")
             if (wifiConnected && ssid == null) {
@@ -103,26 +99,6 @@ object NetworkDiagnostics {
             sock.receive(recv)
             val acked = EimuProtocol.parseIncoming(recv.data, recv.length) is EimuProtocol.Incoming.HelloAck
             true to acked
-        } catch (_: java.net.SocketTimeoutException) {
-            true to false
-        } catch (_: Throwable) {
-            false to false
-        } finally {
-            sock.close()
-        }
-    }
-
-    private fun probeServer(host: String, port: Int, mac: ByteArray): Pair<Boolean, Boolean> {
-        val sock = DatagramSocket()
-        return try {
-            sock.soTimeout = 1500
-            val handshake = SlimeProtocol.handshake(0L, mac)
-            val addr = InetSocketAddress(host, port).address ?: return false to false
-            sock.send(DatagramPacket(handshake, handshake.size, addr, port))
-            val buf = ByteArray(1024)
-            val recv = DatagramPacket(buf, buf.size)
-            sock.receive(recv)
-            true to true
         } catch (_: java.net.SocketTimeoutException) {
             true to false
         } catch (_: Throwable) {

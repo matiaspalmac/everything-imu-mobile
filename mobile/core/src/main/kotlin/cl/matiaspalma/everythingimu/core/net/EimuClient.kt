@@ -24,9 +24,8 @@ import kotlinx.coroutines.withContext
  * eimu remote-hub client. Streams this phone's devices (handle 0 = the phone
  * itself, 1+ = BLE controllers) to the desktop app's `device-remote` UDP
  * listener. Connection liveness = HELLO/HELLO_ACK; devices re-announce every
- * 2 s as keepalive. Mirrors [SlimeVrClient]'s single-send-thread + state-flow
- * shape so [cl.matiaspalma.everythingimu.core.tracking.TrackingController]
- * can drive either interchangeably.
+ * 2 s as keepalive. Every datagram is built and sent on a single send thread
+ * so the wire order always matches the submission order.
  */
 class EimuClient(
     private val uuid: ByteArray,
@@ -81,6 +80,7 @@ class EimuClient(
         endpoint = target
         try {
             socket = DatagramSocket().apply { soTimeout = 250 }
+            Log.i(tag, "eimu socket bound localPort=${socket?.localPort} -> $host:$port")
             lastAckNanos = 0L
             _lastError.value = null
             recvJob = scope.launch { recvLoop() }

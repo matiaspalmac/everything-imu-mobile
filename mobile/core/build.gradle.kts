@@ -31,7 +31,7 @@ android {
     }
 
     testOptions {
-        // SlimeVrClient logs via android.util.Log, which is a stub in JVM unit
+        // Network clients log via android.util.Log, which is a stub in JVM unit
         // tests. Return defaults instead of throwing "not mocked".
         unitTests.isReturnDefaultValues = true
     }
