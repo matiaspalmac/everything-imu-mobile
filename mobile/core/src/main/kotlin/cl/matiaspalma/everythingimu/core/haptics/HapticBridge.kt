@@ -241,6 +241,11 @@ class HapticBridge(context: Context) {
     /** Direct one-shot pulse from the eimu desktop rumble backchannel. */
     fun pulse(intensity: Float) {
         val clamped = intensity.coerceIn(0f, 1f)
+        // Surface desktop rumble in the same log the OSC bridge uses, so the
+        // haptics screen shows the pulses are arriving even if the motor is
+        // silenced by OEM settings.
+        appendLog("(eimu) desktop rumble", clamped)
+        _state.value = _state.value.copy(eimuPulses = _state.value.eimuPulses + 1)
         if (clamped <= 0f) cancelVibration() else triggerVibration(clamped)
     }
 
@@ -254,4 +259,6 @@ data class HapticState(
     val port: Int = 9001,
     val activeIntensity: Float = 0f,
     val lastEventNanos: Long = 0L,
+    /** Count of desktop-initiated rumble pulses received this session. */
+    val eimuPulses: Long = 0L,
 )

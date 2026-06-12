@@ -63,6 +63,13 @@ fun HapticsScreen(onClose: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = EimuPalette.FgSecondary,
         )
+        if (state.eimuPulses > 0) {
+            Text(
+                "eimu: ${state.eimuPulses}",
+                style = MaterialTheme.typography.bodySmall,
+                color = EimuPalette.FgMuted,
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
