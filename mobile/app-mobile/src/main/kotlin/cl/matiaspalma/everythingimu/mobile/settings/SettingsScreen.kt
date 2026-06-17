@@ -397,6 +397,14 @@ fun SettingsScreen() {
             UpdaterRow()
         }
 
+        SectionHeader(t.faq_title)
+        EimuCard {
+            CardTitle(t.faq_title)
+            FaqRow(t.faq_q1, t.faq_a1)
+            FaqRow(t.faq_q2, t.faq_a2)
+            FaqRow(t.faq_q3, t.faq_a3)
+        }
+
         SectionHeader(t.settings_about)
         EimuCard {
             CardTitle(t.settings_about)
@@ -430,7 +438,7 @@ private fun ThemeOption(
     onClick: () -> Unit,
 ) {
     val border = if (selected) EimuPalette.Accent else EimuPalette.Outline
-    val bg = if (selected) EimuPalette.WarnSoft else EimuPalette.BgElevated
+    val bg = if (selected) EimuPalette.AccentSoft else EimuPalette.BgElevated
     val fg = if (selected) EimuPalette.Accent else EimuPalette.FgSecondary
     Row(
         modifier = Modifier
@@ -457,7 +465,7 @@ private fun ThemeOption(
 @Composable
 private fun LangOption(label: String, selected: Boolean, onClick: () -> Unit) {
     val border = if (selected) EimuPalette.Accent else EimuPalette.Outline
-    val bg = if (selected) EimuPalette.WarnSoft else EimuPalette.BgElevated
+    val bg = if (selected) EimuPalette.AccentSoft else EimuPalette.BgElevated
     val fg = if (selected) EimuPalette.Accent else EimuPalette.FgSecondary
     Box(
         modifier = Modifier
@@ -502,6 +510,14 @@ private fun TipRow(title: String, body: String) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title, color = EimuPalette.FgPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         Text(body, color = EimuPalette.FgSecondary, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun FaqRow(question: String, answer: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(top = 4.dp)) {
+        Text(question, color = EimuPalette.FgPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Text(answer, color = EimuPalette.FgSecondary, style = MaterialTheme.typography.bodySmall)
     }
 }
 
