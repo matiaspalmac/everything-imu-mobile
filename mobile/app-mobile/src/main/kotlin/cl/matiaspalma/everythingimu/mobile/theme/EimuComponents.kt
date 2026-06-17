@@ -21,6 +21,7 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
         color = EimuPalette.FgMuted,
+        fontFamily = SpaceGrotesk,
         fontWeight = FontWeight.SemiBold,
         fontSize = 11.sp,
         letterSpacing = 1.2.sp,

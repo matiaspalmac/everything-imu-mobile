@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Home
@@ -22,10 +23,13 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** Tabs mirror eimu desktop sidebar (House / Pulse / VibrateIcon / Bug / GearSix from @phosphor-icons/react). */
 enum class EimuTab(
@@ -58,7 +62,13 @@ fun EimuShell(
             contentColor = EimuPalette.FgPrimary,
             bottomBar = { EimuBottomNav(current, onSelect, labelOf) },
         ) { inner ->
-            content(inner)
+            // Cap content width so inputs/text don't stretch edge-to-edge on
+            // landscape / tablet widths; centred, no effect on phone portrait.
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Box(modifier = Modifier.widthIn(max = 640.dp).fillMaxSize()) {
+                    content(inner)
+                }
+            }
         }
     }
 }
@@ -90,6 +100,9 @@ private fun EimuBottomNav(
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
+                        // 10sp keeps the longest labels ("Calibrate"/"Vibración")
+                        // from ellipsizing on ~320dp small phones.
+                        fontSize = 10.sp,
                     )
                 },
                 alwaysShowLabel = true,
@@ -98,7 +111,7 @@ private fun EimuBottomNav(
                     unselectedIconColor = EimuPalette.FgMuted,
                     selectedTextColor = EimuPalette.Accent,
                     unselectedTextColor = EimuPalette.FgMuted,
-                    indicatorColor = EimuPalette.WarnSoft,
+                    indicatorColor = EimuPalette.AccentSoft,
                 ),
             )
         }

@@ -12,9 +12,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import cl.matiaspalma.everythingimu.mobile.R
+
+/**
+ * Display face — Space Grotesk, the one characterful typeface in the system,
+ * mirroring the desktop --font-display token. Used for titles + section
+ * labels only; body text stays on the platform sans for speed and legibility.
+ */
+val SpaceGrotesk = FontFamily(
+    Font(R.font.space_grotesk_medium, FontWeight.Medium),
+    Font(R.font.space_grotesk_semibold, FontWeight.SemiBold),
+)
 
 /** Token bundle mirroring apps/ui styles.css :root variables. */
 data class Palette(
@@ -42,7 +54,9 @@ val DarkPalette = Palette(
     BgElevated = Color(0xFF1F2025),
     FgPrimary = Color(0xFFEBEBED),
     FgSecondary = Color(0xFFA4A4A8),
-    FgMuted = Color(0xFF6B6B6F),
+    // Raised from 0xFF6B6B6F (~3.3:1) to clear AA 4.5:1 on BgPanel for the
+    // 10–11sp metric text that uses it. Mirrors desktop --fg-muted bump.
+    FgMuted = Color(0xFF8C8C90),
     Accent = Color(0xFFF7502A),
     AccentBright = Color(0xFFFF7444),
     AccentDeep = Color(0xFFCC361E),
@@ -61,7 +75,9 @@ val LightPalette = Palette(
     BgElevated = Color(0xFFDDDEE1),
     FgPrimary = Color(0xFF1A1A1D),
     FgSecondary = Color(0xFF424246),
-    FgMuted = Color(0xFF68696C),
+    // Darkened from 0xFF68696C (~3.6:1) to clear AA 4.5:1 on the pale
+    // BgPanel for 10–11sp metric text. Mirrors desktop --fg-muted bump.
+    FgMuted = Color(0xFF5B5C5F),
     Accent = Color(0xFFD63911),
     AccentBright = Color(0xFFF65311),
     AccentDeep = Color(0xFFAC1D03),
@@ -138,13 +154,13 @@ private fun eimuScheme(): ColorScheme {
 
 private val EimuTypography = Typography(
     titleLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = SpaceGrotesk,
         fontWeight = FontWeight.Medium,
         fontSize = 22.sp,
-        letterSpacing = 0.sp,
+        letterSpacing = (-0.2).sp,
     ),
     titleMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = SpaceGrotesk,
         fontWeight = FontWeight.Medium,
         fontSize = 16.sp,
     ),
