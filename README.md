@@ -1,6 +1,15 @@
-# everything-imu-mobile
+<div align="center">
+  <h1>everything-imu-mobile</h1>
+  <p><strong>Turn an Android phone and a Wear OS watch into full-body SlimeVR trackers</strong></p>
 
-Turn an Android phone — and a Wear OS watch — into full-body SlimeVR trackers.
+  <p>
+    <a href="https://github.com/matiaspalmac/everything-imu-mobile/actions/workflows/ci.yml"><img src="https://github.com/matiaspalmac/everything-imu-mobile/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+    <img src="https://img.shields.io/badge/platform-Android%20%7C%20Wear%20OS-3DDC84.svg" alt="Platform">
+    <a href="https://github.com/matiaspalmac/everything-imu-mobile/releases/latest"><img src="https://img.shields.io/github/v/release/matiaspalmac/everything-imu-mobile?include_prereleases&label=release" alt="Latest release"></a>
+  </p>
+</div>
+
 No extra hardware: the device's own IMU is streamed to the eimu desktop app
 over Wi-Fi, and haptics are sent back to the device's vibration motor.
 
@@ -139,4 +148,4 @@ kept in sync manually — they change rarely.
 
 ## License
 
-MIT.
+[MIT](LICENSE). Contributions are accepted under the same license.
