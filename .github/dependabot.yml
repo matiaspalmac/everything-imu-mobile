@@ -1,0 +1,43 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tokio:
+        patterns:
+          - "tokio"
+          - "tokio-*"
+      serde:
+        patterns:
+          - "serde"
+          - "serde_*"
+      tracing:
+        patterns:
+          - "tracing"
+          - "tracing-*"
+
+  - package-ecosystem: gradle
+    directory: "/mobile"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      compose:
+        patterns:
+          - "androidx.compose*"
+      androidx:
+        patterns:
+          - "androidx.*"
+      kotlin:
+        patterns:
+          - "org.jetbrains.kotlin*"
+          - "org.jetbrains.kotlinx*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
