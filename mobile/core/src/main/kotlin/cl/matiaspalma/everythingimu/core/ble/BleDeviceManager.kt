@@ -197,7 +197,12 @@ class BleDeviceManager(
 
     private val jc2Listener = object : Jc2Device.Listener {
         override fun onReady(device: Jc2Device) {
-            val handle = handles.computeIfAbsent(device.address) { nextHandle.getAndIncrement() }
+            // putIfAbsent (not computeIfAbsent, which is API 24+) keeps this
+            // atomic on the minSdk-21 floor.
+            val handle = handles[device.address] ?: run {
+                val fresh = nextHandle.getAndIncrement()
+                handles.putIfAbsent(device.address, fresh) ?: fresh
+            }
             val kindWire = when (device.kind) {
                 Jc2Kind.Left -> EimuProtocol.KIND_JOYCON2_L
                 Jc2Kind.Right -> EimuProtocol.KIND_JOYCON2_R
@@ -244,7 +249,12 @@ class BleDeviceManager(
 
     private val hopxListener = object : HopxDevice.Listener {
         override fun onReady(device: HopxDevice) {
-            val handle = handles.computeIfAbsent(device.address) { nextHandle.getAndIncrement() }
+            // putIfAbsent (not computeIfAbsent, which is API 24+) keeps this
+            // atomic on the minSdk-21 floor.
+            val handle = handles[device.address] ?: run {
+                val fresh = nextHandle.getAndIncrement()
+                handles.putIfAbsent(device.address, fresh) ?: fresh
+            }
             eimuClient()?.announceDevice(
                 EimuClient.AnnouncedDevice(
                     handle = handle,
