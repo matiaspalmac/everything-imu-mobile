@@ -43,6 +43,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -73,9 +75,20 @@ object TrackingController {
     @Volatile var onControllerRumble: ((Int, Float) -> Unit)? = null
     private var prefs: AppPrefs? = null
     private var wifiBinder: WifiBinder? = null
-    private var pumpJob: Job? = null
+    @Volatile private var pumpJob: Job? = null
+    private val pumpLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var initialized = false
+
+    // Serializes connect() so overlapping call sites (cold-start auto-connect,
+    // the manual button, the network-callback reconnect, Wear) cannot interleave
+    // and leak duplicate announce/pump coroutines. connectedHost/Port track the
+    // live endpoint so a repeat connect to the same host:port is a no-op.
+    private val connectMutex = Mutex()
+    @Volatile private var announceJob: Job? = null
+    @Volatile private var connectedHost: String? = null
+    @Volatile private var connectedPort: Int = 0
+    private val mirrorLock = Any()
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
@@ -182,11 +195,20 @@ object TrackingController {
             scope.launch { appPrefs.setGyroBias(bias) }
         }
         scope.launch {
-            calibration = appPrefs.loadCalibration()
-            repo.applyCalibration(calibration.gyroBias, calibration.mag)
-            val uuid = appPrefs.deviceUuidOrCreate()
-            val deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim()
-            val e = EimuClient(EimuClient.uuidBytes(uuid), deviceName.ifBlank { "Android" })
+            // Build the client inside a try so a DataStore/prefs failure can
+            // never leave eimuReady uncompleted — connect() awaits it, and a
+            // never-completed deferred would hang the app forever. Fall back to
+            // a default identity on error.
+            val e = try {
+                calibration = appPrefs.loadCalibration()
+                repo.applyCalibration(calibration.gyroBias, calibration.mag)
+                val uuid = appPrefs.deviceUuidOrCreate()
+                val deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim()
+                EimuClient(EimuClient.uuidBytes(uuid), deviceName.ifBlank { "Android" })
+            } catch (t: Throwable) {
+                android.util.Log.e("TrackingController", "init failed; using default identity", t)
+                EimuClient(EimuClient.uuidBytes(DEFAULT_UUID), "Android")
+            }
             e.onRumble = { handle, intensity ->
                 if (handle == PHONE_HANDLE) hapticBridge?.pulse(intensity)
                 else onControllerRumble?.invoke(handle, intensity)
@@ -202,11 +224,35 @@ object TrackingController {
                 if (prev != role) applyHubRole()
             }
         }
-        scope.launch { appPrefs.sendRateHz.collect { sendRateHz = it } }
         scope.launch {
+            var first = true
+            var rateJob: Job? = null
+            appPrefs.sendRateHz.collect {
+                sendRateHz = it
+                // Skip the initial persisted emission; on a real user change
+                // re-announce (debounced) so a dragged rate slider re-emits the
+                // new rateHz once, not on every intermediate step.
+                if (first) {
+                    first = false
+                } else {
+                    rateJob?.cancel()
+                    rateJob = scope.launch {
+                        delay(RATE_REANNOUNCE_DEBOUNCE_MS)
+                        reannounceIfLive()
+                    }
+                }
+            }
+        }
+        scope.launch {
+            var prevMag: Boolean? = null
             appPrefs.magEnabled.collect {
                 magEnabled = it
                 sensors?.magInputEnabled = it
+                // Re-announce so the desktop rebuilds VQF for the new 6/9DOF
+                // mode (hasMag rides the announce, not the per-sample frame).
+                // Skip the initial emission — connect() already announces.
+                if (prevMag != null && prevMag != it) reannounceIfLive()
+                prevMag = it
             }
         }
         scope.launch { appPrefs.shakeRecenter.collect { shakeEnabled = it } }
@@ -347,16 +393,35 @@ object TrackingController {
         // The persisted port may predate hub mode (SlimeVR default 6969);
         // substitute the eimu listener port unless the user typed a custom one.
         val effectivePort = if (port == 6969) EimuProtocol.DEFAULT_PORT else port
-        withContext(Dispatchers.IO) { e.connect(host, effectivePort) }
-        mirror(e.state, e.stats, e.lastError)
-        prefs?.setServer(host, port)
-        if (roleSendsPhone()) {
-            announcePhone(e)
-            startRawPump(e)
-        } else {
-            announcePhoneHapticsOnly(e)
+        // Serialize: two overlapping connects would each re-run mirror/pump and
+        // launch a fresh untracked announce warmup loop.
+        connectMutex.withLock {
+            // Already streaming to this exact endpoint — nothing to do.
+            if (e.state.value == ConnectionState.Connected &&
+                connectedHost == host && connectedPort == effectivePort
+            ) {
+                return
+            }
+            withContext(Dispatchers.IO) { e.connect(host, effectivePort) }
+            mirror(e.state, e.stats, e.lastError)
+            // EimuClient.connect() swallows all failures into state=Failed and
+            // returns normally; do not announce a phantom tracker, install the
+            // raw sink, or persist the address unless the socket is actually up.
+            val st = e.state.value
+            if (st != ConnectionState.Connected && st != ConnectionState.Connecting) {
+                return
+            }
+            connectedHost = host
+            connectedPort = effectivePort
+            prefs?.setServer(host, port)
+            if (roleSendsPhone()) {
+                announcePhone(e)
+                startRawPump(e)
+            } else {
+                announcePhoneHapticsOnly(e)
+            }
+            if (roleSendsGamepads()) startGamepadForwarder()
         }
-        if (roleSendsGamepads()) startGamepadForwarder()
     }
 
     /** Broadcast HELLO on the LAN; returns the desktop's IP or null. */
@@ -370,9 +435,26 @@ object TrackingController {
     fun disconnect() {
         eimuClient?.disconnect()
         stopGamepadForwarder()
-        sensors?.rawSampleSink = null
-        pumpJob?.cancel()
-        pumpJob = null
+        stopRawPump()
+        connectedHost = null
+        connectedPort = 0
+    }
+
+    /**
+     * Re-announce the phone tracker when a live-affecting setting (mag mode,
+     * send rate) changes mid-session so the desktop rebuilds its fusion for the
+     * new descriptor. No-op unless connected and currently acting as a tracker.
+     */
+    private fun reannounceIfLive() {
+        val e = eimuClient ?: return
+        val connected = _connection.value == ConnectionState.Connected ||
+            _connection.value == ConnectionState.Connecting
+        if (connected && roleSendsPhone()) {
+            // The desktop ignores a re-announce of a live handle, so drop it
+            // first to force a fresh descriptor (same pattern as applyHubRole).
+            e.removeDevice(PHONE_HANDLE)
+            announcePhone(e)
+        }
     }
 
     /** Recenter: BUTTON message to the eimu hub. */
@@ -410,15 +492,20 @@ object TrackingController {
         statsF: StateFlow<ClientStats>,
         errF: StateFlow<String?>,
     ) {
-        mirrorJobs.forEach { it.cancel() }
-        mirrorJobs.clear()
-        mirrorJobs += scope.launch { stateF.collectStateInto(_connection) }
-        mirrorJobs += scope.launch { statsF.collectStateInto(_clientStats) }
-        mirrorJobs += scope.launch { errF.collectStateInto(_lastError) }
+        synchronized(mirrorLock) {
+            mirrorJobs.forEach { it.cancel() }
+            mirrorJobs.clear()
+            mirrorJobs += scope.launch { stateF.collectStateInto(_connection) }
+            mirrorJobs += scope.launch { statsF.collectStateInto(_clientStats) }
+            mirrorJobs += scope.launch { errF.collectStateInto(_lastError) }
+        }
     }
 
     private fun announcePhone(e: EimuClient) {
-        scope.launch {
+        // Cancel any prior warmup loop so repeat announces (connect, hub-role
+        // switch, mag/rate re-announce) don't stack untracked coroutines.
+        announceJob?.cancel()
+        announceJob = scope.launch {
             val mac = deviceMac()
             suspend fun announce(rate: Int) {
                 e.announceDevice(
@@ -478,42 +565,55 @@ object TrackingController {
      * desktop runs fusion. Local VQF keeps running for the UI orientation card.
      */
     private fun startRawPump(e: EimuClient) {
-        pumpJob?.cancel()
-        pumpJob = null
         val repo = sensors ?: return
-        var nextSendNanos = 0L
-        repo.rawSampleSink = { gyro, accel, mag, tsNanos ->
-            val now = System.nanoTime()
-            val intervalNs = 1_000_000_000L / sendRateHz.coerceAtLeast(20)
-            if (now >= nextSendNanos) {
-                e.sendImu(
-                    PHONE_HANDLE,
-                    tsNanos / 1_000,
-                    floatArrayOf(gyro.x, gyro.y, gyro.z),
-                    accel,
-                    mag,
-                )
-                // Advance the deadline in exact intervals instead of resetting
-                // it to `now`: sends can only happen on sensor-event boundaries
-                // (~2.5 ms at 395 Hz), and re-anchoring rounds every period up
-                // to a whole number of events — a 200 Hz target decimated to
-                // ~150 Hz. Fall back to re-anchoring only after a long gap.
-                nextSendNanos =
-                    if (now - nextSendNanos < intervalNs) nextSendNanos + intervalNs
-                    else now + intervalNs
-            }
-        }
-        // UI-only mirror: the desktop owns fusion, but the local VQF keeps
-        // running — surface it at ~60 Hz so the orientation card stays live.
-        pumpJob = scope.launch {
-            var lastUiNanos = 0L
-            repo.quaternion.collect { q ->
+        // Confine the pump lifecycle to one lock: connect(), onServiceStart(),
+        // and applyHubRole() can all (re)start it from different dispatchers, and
+        // disconnect()/onServiceStop() null the sink concurrently.
+        synchronized(pumpLock) {
+            pumpJob?.cancel()
+            pumpJob = null
+            var nextSendNanos = 0L
+            repo.rawSampleSink = { gyro, accel, mag, tsNanos ->
                 val now = System.nanoTime()
-                if (now - lastUiNanos >= UI_QUAT_INTERVAL_NANOS) {
-                    _mountedQuaternion.value = applyMountOffset(q)
-                    lastUiNanos = now
+                val intervalNs = 1_000_000_000L / sendRateHz.coerceAtLeast(20)
+                if (now >= nextSendNanos) {
+                    e.sendImu(
+                        PHONE_HANDLE,
+                        tsNanos / 1_000,
+                        floatArrayOf(gyro.x, gyro.y, gyro.z),
+                        accel,
+                        mag,
+                    )
+                    // Advance the deadline in exact intervals instead of resetting
+                    // it to `now`: sends can only happen on sensor-event boundaries
+                    // (~2.5 ms at 395 Hz), and re-anchoring rounds every period up
+                    // to a whole number of events — a 200 Hz target decimated to
+                    // ~150 Hz. Fall back to re-anchoring only after a long gap.
+                    nextSendNanos =
+                        if (now - nextSendNanos < intervalNs) nextSendNanos + intervalNs
+                        else now + intervalNs
                 }
             }
+            // UI-only mirror: the desktop owns fusion, but the local VQF keeps
+            // running — surface it at ~60 Hz so the orientation card stays live.
+            pumpJob = scope.launch {
+                var lastUiNanos = 0L
+                repo.quaternion.collect { q ->
+                    val now = System.nanoTime()
+                    if (now - lastUiNanos >= UI_QUAT_INTERVAL_NANOS) {
+                        _mountedQuaternion.value = applyMountOffset(q)
+                        lastUiNanos = now
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopRawPump() {
+        synchronized(pumpLock) {
+            sensors?.rawSampleSink = null
+            pumpJob?.cancel()
+            pumpJob = null
         }
     }
 
@@ -529,7 +629,18 @@ object TrackingController {
     suspend fun persistAndSyncServer(context: Context, host: String, port: Int) {
         prefs?.setServer(host, port)
         if (host.isNotBlank()) {
-            scope.launch { WearableConfigSender.push(context, host, port) }
+            scope.launch {
+                // push() returns Result so a failed putDataItem (Play Services
+                // missing/updating) is detectable — surface it instead of
+                // silently leaving the watch on the stale address.
+                WearableConfigSender.push(context, host, port).onFailure {
+                    android.util.Log.w(
+                        "TrackingController",
+                        "Watch config push failed; watch keeps its previous address",
+                        it,
+                    )
+                }
+            }
         }
     }
 
@@ -591,14 +702,53 @@ object TrackingController {
     }
 
     internal fun onServiceStop() {
+        // The notification "Stop" and onDestroy both route here. Tear down the
+        // socket + gamepad forwarder + raw pump too (via disconnect()); leaving
+        // the client live kept the HELLO/announce loops running so the desktop
+        // still saw a phantom live tracker after a stop.
+        disconnect()
         sensors?.stop()
-        sensors?.rawSampleSink = null
         wifiBinder?.release()
         _running.value = false
-        pumpJob?.cancel()
-        pumpJob = null
         mountOffset = Quaternion.IDENTITY
         _mountedQuaternion.value = Quaternion.IDENTITY
+    }
+
+    /**
+     * Full teardown counterpart to [ensureInit]: releases the sensor stack,
+     * network client, BLE + gamepad managers, and haptics, and unregisters the
+     * connectivity callback so no owned resource outlives the process by
+     * accident. Intended for process/app shutdown only — a normal stop-tracking
+     * cycle goes through [onServiceStop], because the UI reads these flows even
+     * while the foreground service is unbound.
+     */
+    @Synchronized
+    fun shutdown() {
+        disconnect()
+        unregisterNetworkCallback()
+        synchronized(mirrorLock) {
+            mirrorJobs.forEach { it.cancel() }
+            mirrorJobs.clear()
+        }
+        announceJob?.cancel()
+        announceJob = null
+        batteryJob?.cancel()
+        batteryJob = null
+        tpsJob?.cancel()
+        tpsJob = null
+        sensors?.release()
+        eimuClient?.shutdown()
+        hapticBridge?.shutdown()
+        bleManager?.shutdown()
+        if (android.os.Build.VERSION.SDK_INT >= 31) gamepadForwarder?.shutdown()
+        wifiBinder?.release()
+    }
+
+    private fun unregisterNetworkCallback() {
+        val cb = netCallback ?: return
+        netCallback = null
+        val cm = appCtx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        try { cm?.unregisterNetworkCallback(cb) } catch (_: Throwable) {}
     }
 
     fun autoMount(): Boolean {
@@ -622,6 +772,9 @@ object TrackingController {
     private const val DEFAULT_UUID = "00000000-0000-0000-0000-000000000000"
     private const val SHAKE_THRESHOLD_MS2 = 25f
     private const val SHAKE_COOLDOWN_NS = 1_500_000_000L
+    // Debounce a dragged send-rate slider so mid-session re-announce fires once
+    // after the value settles rather than on every intermediate step.
+    private const val RATE_REANNOUNCE_DEBOUNCE_MS = 1_000L
 }
 
 data class SensorAvailability(
