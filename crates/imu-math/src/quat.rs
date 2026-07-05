@@ -5,7 +5,7 @@ use crate::{Quaternion, UnitQuaternion, Vector3};
 /// Normalize a quaternion. Falls back to identity when norm < 1e-6 (SlimeIMU `QuaternionUtils.Normalize` semantics).
 pub fn normalize_or_identity(q: Quaternion<f32>) -> UnitQuaternion<f32> {
     let mag_sq = q.w * q.w + q.i * q.i + q.j * q.j + q.k * q.k;
-    if mag_sq < 1e-12 {
+    if !mag_sq.is_finite() || mag_sq < 1e-12 {
         return UnitQuaternion::identity();
     }
     UnitQuaternion::from_quaternion(q)
@@ -59,7 +59,7 @@ pub fn quat_from_gravity(
         // 180° about X
         return UnitQuaternion::from_quaternion(Quaternion::new(0.0, 1.0, 0.0, 0.0));
     }
-    let axis = gravity.cross(&reference);
+    let axis = reference.cross(&gravity);
     let axis = match axis.try_normalize(1e-6) {
         Some(a) => a,
         None => return UnitQuaternion::identity(),
@@ -117,5 +117,16 @@ mod tests {
         let center = Vector3::zeros();
         let q = quat_from_gravity(raw, center, 1.0);
         assert_relative_eq!(q.w, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn quat_from_gravity_rotates_reference_to_gravity() {
+        // Non-parallel case: gravity along +X. The result must rotate the
+        // reference (0,0,-1) onto that gravity direction (CR13 cross-product
+        // order — the inverted order rotated to -gravity instead).
+        let raw = Vector3::new(1.0_f32, 0.0, 0.0);
+        let q = quat_from_gravity(raw, Vector3::zeros(), 1.0);
+        let reference = Vector3::new(0.0, 0.0, -1.0);
+        assert_relative_eq!(q * reference, Vector3::new(1.0, 0.0, 0.0), epsilon = 1e-5);
     }
 }
