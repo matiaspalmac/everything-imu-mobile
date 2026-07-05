@@ -52,6 +52,14 @@ import com.google.android.gms.common.GoogleApiAvailability
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Process-scoped one-shot guard for auto-connect. Survives Activity recreation
+ * (config change / process restore) so it can't re-fire and tear down the live
+ * UDP socket — and won't resurrect a session the user explicitly disconnected.
+ */
+private val autoConnectAttempted = AtomicBoolean(false)
 
 class MainActivity : ComponentActivity() {
 
@@ -134,8 +142,12 @@ private fun WearApp() {
                 // No GMS (AOSP / de-Googled), or no push arrived → picker.
                 showPicker = host.isBlank()
             }
-            // Auto-connect on launch when enabled and a host is known.
-            if (host.isNotBlank() && TrackingController.autoConnectEnabled()) {
+            // Auto-connect on launch when enabled and a host is known. Gated by a
+            // process-scoped flag so a config-change/restore recomposition can't
+            // re-run it and flap the live connection.
+            if (host.isNotBlank() && TrackingController.autoConnectEnabled() &&
+                autoConnectAttempted.compareAndSet(false, true)
+            ) {
                 TrackingController.start(context)
                 TrackingController.connect(host, port)
             }

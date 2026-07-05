@@ -81,7 +81,15 @@ import cl.matiaspalma.everythingimu.mobile.theme.applyThemeMode
 import cl.matiaspalma.everythingimu.mobile.theme.SectionHeader
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
+
+/**
+ * Process-scoped one-shot guard for auto-connect. Survives Activity recreation
+ * (rotation, theme/font-scale/locale change, process restore) so a config change
+ * can't re-fire auto-connect and tear down the live UDP socket.
+ */
+private val autoConnectAttempted = AtomicBoolean(false)
 
 class MainActivity : ComponentActivity() {
 
@@ -156,7 +164,9 @@ private fun RootScreen() {
     // a connect and bounce the session.
     LaunchedEffect(Unit) {
         val savedHost = TrackingController.savedHost()
-        if (savedHost.isNotBlank() && prefs.autoConnect.first()) {
+        if (savedHost.isNotBlank() && prefs.autoConnect.first() &&
+            autoConnectAttempted.compareAndSet(false, true)
+        ) {
             TrackingController.start(ctx)
             TrackingController.connect(savedHost, TrackingController.savedPort())
             if (prefs.autostartHaptics.first()) TrackingController.hapticBridge()?.start()

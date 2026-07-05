@@ -29,7 +29,16 @@ class TrackingService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        when (intent?.action) {
+        if (intent == null) {
+            // Null intent = the system recreated us after a low-memory kill.
+            // We cannot re-open the UDP socket / re-key the desktop tracker from
+            // here, so resurrecting tracking would only spin sensors and hold the
+            // wakelock + Wi-Fi lock while sending zero packets. Don't restart a
+            // half-connected zombie — stop cleanly; the user reconnects from the UI.
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        when (intent.action) {
             ACTION_STOP -> {
                 stopTracking()
                 return START_NOT_STICKY
@@ -78,9 +87,11 @@ class TrackingService : LifecycleService() {
             "everythingimu:tracking",
         ).apply {
             setReferenceCounted(false)
-            // No timeout — released explicitly on stopTracking. Tracking
-            // legitimately runs for the full VR session.
-            acquire()
+            // Released explicitly on stopTracking; a VR session legitimately runs
+            // for a long time. The defensive timeout is only a safety net so an
+            // orphaned service (missed stop, crash) can't hold the CPU awake
+            // forever — it's far longer than any real session.
+            acquire(WAKELOCK_TIMEOUT_MS)
         }
     }
 
@@ -170,6 +181,9 @@ class TrackingService : LifecycleService() {
         const val ACTION_RECENTER = "cl.matiaspalma.everythingimu.action.RECENTER"
         private const val CHANNEL_ID = "tracking"
         private const val NOTIFICATION_ID = 1001
+
+        /** Defensive upper bound on the wakelock — a safety net, not a session cap. */
+        private const val WAKELOCK_TIMEOUT_MS = 4L * 60 * 60 * 1000 // 4 hours
 
         fun start(context: Context) {
             val intent = Intent(context, TrackingService::class.java)

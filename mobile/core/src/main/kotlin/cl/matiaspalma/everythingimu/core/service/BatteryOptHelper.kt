@@ -34,10 +34,31 @@ object BatteryOptHelper {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return Intent(Settings.ACTION_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
         }
-        return Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
             data = Uri.parse("package:${context.packageName}")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        val settingsList = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        // Android Go / stripped OEM ROMs may ship neither battery-optimization
+        // activity; launching an unresolvable intent throws
+        // ActivityNotFoundException and crashes on tap. Fall back through the
+        // settings list to the always-present top-level Settings.
+        return firstResolvable(context, direct, settingsList)
+    }
+
+    /**
+     * Returns the first candidate whose target activity actually exists, else a
+     * plain ACTION_SETTINGS intent (always resolvable) so startActivity can never
+     * throw ActivityNotFoundException.
+     */
+    private fun firstResolvable(context: Context, vararg candidates: Intent): Intent {
+        val pm = context.packageManager
+        for (intent in candidates) {
+            if (intent.resolveActivity(pm) != null) return intent
+        }
+        return Intent(Settings.ACTION_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
     }
 
     /** Falls back to the OS settings list when the direct intent is unavailable. */

@@ -22,6 +22,9 @@ class WifiBinder(context: Context) {
 
     private var callback: ConnectivityManager.NetworkCallback? = null
 
+    @Volatile
+    private var boundNetwork: Network? = null
+
     fun bindToWifi() {
         if (callback != null) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
@@ -37,17 +40,24 @@ class WifiBinder(context: Context) {
             override fun onAvailable(network: Network) {
                 try {
                     cm.bindProcessToNetwork(network)
+                    boundNetwork = network
                 } catch (t: Throwable) {
                     Log.w("WifiBinder", "bindProcessToNetwork failed", t)
                 }
             }
 
             override fun onLost(network: Network) {
+                // Under make-before-break handovers (onAvailable(A) →
+                // onAvailable(B) → onLost(A)), the delayed onLost(A) must not
+                // tear down the binding to the newer, still-valid network B.
+                // Only unbind if the network we lost is the one we're bound to.
+                if (network != boundNetwork) return
                 try {
                     cm.bindProcessToNetwork(null)
                 } catch (_: Throwable) {
                     // best-effort
                 }
+                boundNetwork = null
             }
         }
         try {
@@ -73,6 +83,7 @@ class WifiBinder(context: Context) {
         } catch (_: Throwable) {
             // best-effort
         }
+        boundNetwork = null
         callback = null
     }
 }

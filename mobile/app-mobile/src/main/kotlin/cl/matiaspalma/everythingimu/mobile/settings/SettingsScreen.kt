@@ -369,12 +369,17 @@ fun SettingsScreen() {
                 ) { Text(t.settings_battery_allow) }
             }
             OutlinedButton(
-                onClick = { ctx.startActivity(BatteryOptHelper.openOptimizationSettings()) },
+                // Swallow ActivityNotFoundException: stripped OEM ROMs / Android
+                // Go may lack the settings activity, and the tap must not crash.
+                onClick = { runCatching { ctx.startActivity(BatteryOptHelper.openOptimizationSettings()) } },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(t.settings_battery_open) }
             OutlinedButton(
                 onClick = {
-                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BatteryOptHelper.oemGuideUrl())))
+                    // No-browser devices throw ActivityNotFoundException on ACTION_VIEW.
+                    runCatching {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BatteryOptHelper.oemGuideUrl())))
+                    }
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(t.settings_battery_oem) }
