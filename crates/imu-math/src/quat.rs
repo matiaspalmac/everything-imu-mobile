@@ -121,12 +121,12 @@ mod tests {
 
     #[test]
     fn quat_from_gravity_rotates_reference_to_gravity() {
-        // Non-parallel case: gravity along +X. The result must rotate the
-        // reference (0,0,-1) onto that gravity direction (CR13 cross-product
-        // order — the inverted order rotated to -gravity instead).
+        // Non-parallel case: reference (0, 0, -1) must rotate onto the gravity direction.
         let raw = Vector3::new(1.0_f32, 0.0, 0.0);
-        let q = quat_from_gravity(raw, Vector3::zeros(), 1.0);
+        let center = Vector3::zeros();
+        let q = quat_from_gravity(raw, center, 1.0);
         let reference = Vector3::new(0.0, 0.0, -1.0);
-        assert_relative_eq!(q * reference, Vector3::new(1.0, 0.0, 0.0), epsilon = 1e-5);
+        let rotated = q.transform_vector(&reference);
+        assert_relative_eq!(rotated, Vector3::new(1.0, 0.0, 0.0), epsilon = 1e-5);
     }
 }
