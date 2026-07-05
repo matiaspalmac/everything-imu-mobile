@@ -139,3 +139,32 @@ val buildJniAndroid = tasks.register<Exec>("buildJniAndroid") {
 }
 
 tasks.named("preBuild").configure { dependsOn(buildJniAndroid) }
+
+// Release safety: buildJniAndroid is best-effort (isIgnoreExitValue = true) so
+// local/debug builds fall back to prebuilt jniLibs when cargo is absent. A
+// release APK/AAB must never ship without the native fusion library, so fail
+// the build if a targeted libjni_android.so is missing before assembling a
+// release. .so artifacts are gitignored, so a silent cargo failure would
+// otherwise sign an APK with empty jniLibs.
+val jniAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+val verifyJniLibs = tasks.register("verifyJniLibs") {
+    group = "verification"
+    description = "Fail the build if a targeted libjni_android.so is missing."
+    dependsOn(buildJniAndroid)
+    val libsRoot = jniLibsAbsPath
+    doLast {
+        val missing = jniAbis.filter { abi ->
+            !File(File(libsRoot, abi), "libjni_android.so").isFile
+        }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Missing native fusion library libjni_android.so for ABI(s): " +
+                    "${missing.joinToString()}. cargo + cargo-ndk must succeed for a " +
+                    "release build (jniLibs are gitignored).",
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }
+    .configureEach { dependsOn(verifyJniLibs) }
