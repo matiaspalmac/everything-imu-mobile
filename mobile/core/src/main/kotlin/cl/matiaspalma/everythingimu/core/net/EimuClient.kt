@@ -5,8 +5,6 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,12 +42,26 @@ class EimuClient(
 
     private val tag = "EimuClient"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val sendExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "eimu-send").apply { isDaemon = true }
+
+    /**
+     * Bounded send queue drained by a single thread so the wire order always
+     * matches submission order. IMU frames drop-oldest once the queue backs up
+     * (a MIUI Wi-Fi power-save stall must not bufferbloat seconds-stale
+     * samples); control messages never drop.
+     */
+    private val sendQueue =
+        java.util.concurrent.LinkedBlockingQueue<Runnable>(SEND_QUEUE_CAPACITY)
+    private val sendExecutor = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS, sendQueue,
+        { r -> Thread(r, "eimu-send").apply { isDaemon = true } },
+    ).apply { prestartCoreThread() }
+
+    private class SendTask(val imu: Boolean, private val body: () -> Unit) : Runnable {
+        override fun run() = body()
     }
 
-    private var socket: DatagramSocket? = null
-    private var endpoint: InetSocketAddress? = null
+    @Volatile private var socket: DatagramSocket? = null
+    @Volatile private var endpoint: InetSocketAddress? = null
     private var recvJob: Job? = null
     private var helloJob: Job? = null
     private var announceJob: Job? = null
@@ -136,10 +148,14 @@ class EimuClient(
     }
 
     fun sendImu(handle: Int, timestampUs: Long, gyro: FloatArray, accel: FloatArray, mag: FloatArray?) {
-        val seq = seqCounters
-            .getOrPut(handle) { java.util.concurrent.atomic.AtomicInteger(0) }
-            .getAndIncrement() and 0xFFFF
-        submit { EimuProtocol.imu2(handle, seq, timestampUs, gyro, accel, mag) }
+        val counter = seqCounters.getOrPut(handle) {
+            java.util.concurrent.atomic.AtomicInteger(0)
+        }
+        submitImu {
+            // Assign seq on the send thread so it matches the actual wire order.
+            val seq = counter.getAndIncrement() and 0xFFFF
+            EimuProtocol.imu2(handle, seq, timestampUs, gyro, accel, mag)
+        }
     }
 
     fun sendBattery(handle: Int, fraction: Float, charging: Boolean) {
@@ -197,6 +213,13 @@ class EimuClient(
         while (scope.isActive && !sock.isClosed) {
             try {
                 sock.receive(pkt)
+                // Drop datagrams whose source is not the connected endpoint: on
+                // an unconnected UDP socket any LAN host could forge a HELLO_ACK
+                // (masking a real disconnect) or a Rumble (driving the motor).
+                val ep = endpoint
+                if (ep != null && (pkt.address != ep.address || pkt.port != ep.port)) {
+                    continue
+                }
                 recvCount++
                 when (val msg = EimuProtocol.parseIncoming(pkt.data, pkt.length)) {
                     is EimuProtocol.Incoming.HelloAck -> {
@@ -223,24 +246,49 @@ class EimuClient(
         }
     }
 
+    /** Control messages (hello/announce/remove/battery/button): never dropped. */
     private fun submit(build: () -> ByteArray) {
         if (sendExecutor.isShutdown) return
-        try {
-            sendExecutor.execute {
-                val sock = socket ?: return@execute
-                val ep = endpoint ?: return@execute
-                try {
-                    val bytes = build()
-                    sock.send(DatagramPacket(bytes, bytes.size, ep.address, ep.port))
-                    sentCount++
-                    updateStats()
-                } catch (t: Throwable) {
-                    Log.w(tag, "send failed", t)
-                    _lastError.value = "Send failed: ${t.message ?: t.javaClass.simpleName}"
-                }
+        val task = SendTask(imu = false) { sendNow(build) }
+        while (!sendQueue.offer(task)) {
+            // Make room without dropping control: evict the oldest queued IMU frame.
+            if (!dropOldestImu()) sendQueue.poll()
+        }
+    }
+
+    /** IMU stream: bounded, drop-oldest so a send stall can't bufferbloat. */
+    private fun submitImu(build: () -> ByteArray) {
+        if (sendExecutor.isShutdown) return
+        val task = SendTask(imu = true) { sendNow(build) }
+        while (!sendQueue.offer(task)) {
+            if (sendQueue.poll() == null) break
+        }
+    }
+
+    /** Remove the oldest queued IMU task, leaving control messages in place. */
+    private fun dropOldestImu(): Boolean {
+        val it = sendQueue.iterator()
+        while (it.hasNext()) {
+            val t = it.next()
+            if (t is SendTask && t.imu) {
+                it.remove()
+                return true
             }
-        } catch (_: RejectedExecutionException) {
-            // shutting down — drop
+        }
+        return false
+    }
+
+    private fun sendNow(build: () -> ByteArray) {
+        val sock = socket ?: return
+        val ep = endpoint ?: return
+        try {
+            val bytes = build()
+            sock.send(DatagramPacket(bytes, bytes.size, ep.address, ep.port))
+            sentCount++
+            updateStats()
+        } catch (t: Throwable) {
+            Log.w(tag, "send failed", t)
+            _lastError.value = "Send failed: ${t.message ?: t.javaClass.simpleName}"
         }
     }
 
@@ -259,6 +307,10 @@ class EimuClient(
         private const val HELLO_SEARCH_MS = 1_000L
         private const val HELLO_CONNECTED_MS = 3_000L
         private const val ANNOUNCE_EVERY_MS = 2_000L
+
+        // Bounded send queue: ~2.5 s of headroom at typical IMU rates before
+        // drop-oldest kicks in.
+        private const val SEND_QUEUE_CAPACITY = 256
 
         // Four hello periods of grace before flagging Reconnecting: MIUI's
         // Wi-Fi power save can hold inbound UDP for seconds with the screen

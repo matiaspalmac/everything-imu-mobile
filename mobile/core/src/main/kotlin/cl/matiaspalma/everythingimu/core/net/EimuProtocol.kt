@@ -56,11 +56,28 @@ object EimuProtocol {
         return buf
     }
 
+    /** Max name length on the wire (single-byte length prefix). */
+    private const val MAX_NAME_BYTES = 64
+
+    /**
+     * UTF-8 encode a name, truncated to at most [MAX_NAME_BYTES] on a codepoint
+     * boundary. A raw byte cut mid-codepoint yields invalid UTF-8 that the
+     * desktop's `str::from_utf8(...)?` rejects, silently dropping the whole
+     * HELLO/ANNOUNCE datagram.
+     */
+    private fun nameToBytes(name: String): ByteArray {
+        val bytes = name.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= MAX_NAME_BYTES) return bytes
+        var end = MAX_NAME_BYTES
+        // Back off any UTF-8 continuation byte (0b10xxxxxx) so the cut lands on a
+        // codepoint boundary, dropping the partial codepoint entirely.
+        while (end > 0 && (bytes[end].toInt() and 0xC0) == 0x80) end--
+        return bytes.copyOf(end)
+    }
+
     fun hello(uuid: ByteArray, name: String, tSendUs: Long? = null): ByteArray {
         require(uuid.size == 16) { "uuid must be 16 bytes" }
-        val nameBytes = name.toByteArray(Charsets.UTF_8).let {
-            if (it.size > 64) it.copyOf(64) else it
-        }
+        val nameBytes = nameToBytes(name)
         val buf = header(MSG_HELLO, 16 + 1 + nameBytes.size + (if (tSendUs != null) 8 else 0))
         buf.put(uuid)
         buf.put(nameBytes.size.toByte())
@@ -82,9 +99,7 @@ object EimuProtocol {
         name: String,
     ): ByteArray {
         require(mac.size == 6) { "mac must be 6 bytes" }
-        val nameBytes = name.toByteArray(Charsets.UTF_8).let {
-            if (it.size > 64) it.copyOf(64) else it
-        }
+        val nameBytes = nameToBytes(name)
         val buf = header(MSG_ANNOUNCE, 2 + 1 + 6 + 3 + 2 + 1 + nameBytes.size)
         buf.putShort(handle.toShort())
         buf.put(kind.toByte())

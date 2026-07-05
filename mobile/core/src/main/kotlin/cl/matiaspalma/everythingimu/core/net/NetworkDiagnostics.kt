@@ -9,7 +9,9 @@ import android.os.Build
 import androidx.core.content.getSystemService
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.InetSocketAddress
+import java.net.InetAddress
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class DiagnosticsReport(
     val wifiConnected: Boolean,
@@ -86,26 +88,61 @@ object NetworkDiagnostics {
         )
     }
 
+    private const val PROBE_TIMEOUT_MS = 1500
+    private const val RESOLVE_TIMEOUT_MS = 1500L
+
     /** eimu hub probe: send a HELLO, expect a HELLO_ACK back. */
-    private fun probeEimu(host: String, port: Int): Pair<Boolean, Boolean> {
-        val sock = DatagramSocket()
-        return try {
-            sock.soTimeout = 1500
-            val hello = EimuProtocol.hello(ByteArray(16), "diagnostics")
-            val addr = InetSocketAddress(host, port).address ?: return false to false
-            sock.send(DatagramPacket(hello, hello.size, addr, port))
-            val buf = ByteArray(64)
-            val recv = DatagramPacket(buf, buf.size)
-            sock.receive(recv)
-            val acked = EimuProtocol.parseIncoming(recv.data, recv.length) is EimuProtocol.Incoming.HelloAck
-            true to acked
-        } catch (_: java.net.SocketTimeoutException) {
-            true to false
-        } catch (_: Throwable) {
-            false to false
-        } finally {
-            sock.close()
+    private suspend fun probeEimu(host: String, port: Int): Pair<Boolean, Boolean> {
+        // Bound name resolution: soTimeout only caps receive(), not the
+        // synchronous lookup, so a black-hole resolver could otherwise hang the
+        // diagnostic spinner. IPv4/IPv6 literals resolve instantly (no lookup).
+        val addr = resolveBounded(host) ?: return false to false
+
+        return withContext(Dispatchers.IO) {
+            var sock: DatagramSocket? = null
+            try {
+                val s = DatagramSocket()
+                sock = s
+                s.soTimeout = PROBE_TIMEOUT_MS
+                // connect() so a closed UDP port surfaces as PortUnreachableException
+                // (reachable, no server) instead of send() silently "succeeding"
+                // against a dead host — send success is not reachability.
+                s.connect(addr, port)
+                val hello = EimuProtocol.hello(ByteArray(16), "diagnostics")
+                s.send(DatagramPacket(hello, hello.size, addr, port))
+                val buf = ByteArray(64)
+                val recv = DatagramPacket(buf, buf.size)
+                s.receive(recv)
+                val acked =
+                    EimuProtocol.parseIncoming(recv.data, recv.length) is EimuProtocol.Incoming.HelloAck
+                true to acked
+            } catch (_: java.net.PortUnreachableException) {
+                // ICMP came back: host reachable, nothing listening on the port.
+                true to false
+            } catch (_: java.net.SocketTimeoutException) {
+                // Total silence — can't confirm the host is reachable over UDP.
+                false to false
+            } catch (_: Throwable) {
+                false to false
+            } finally {
+                sock?.close()
+            }
         }
+    }
+
+    /**
+     * Resolve [host] with a hard wall-clock cap. `getByName` is a blocking call
+     * that coroutine cancellation cannot interrupt, so the lookup runs on a
+     * throwaway daemon thread that is abandoned if it exceeds the deadline.
+     */
+    private suspend fun resolveBounded(host: String): InetAddress? = withContext(Dispatchers.IO) {
+        val slot = java.util.concurrent.atomic.AtomicReference<InetAddress?>()
+        val worker = Thread {
+            slot.set(runCatching { InetAddress.getByName(host) }.getOrNull())
+        }.apply { isDaemon = true }
+        worker.start()
+        worker.join(RESOLVE_TIMEOUT_MS)
+        slot.get()
     }
 
     private fun sameSubnet24(a: String, b: String): Boolean {
