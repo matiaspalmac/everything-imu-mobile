@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.InputDevice
 import androidx.annotation.RequiresApi
 import cl.matiaspalma.everythingimu.core.net.EimuClient
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,8 +66,16 @@ class GamepadSensorForwarder(
     private val handlerThread = HandlerThread("eimu-gamepads").apply { start() }
     private val handler = Handler(handlerThread.looper)
 
-    private val forwarded = HashMap<Int, ForwardedPad>()
+    // Concurrent: mutated from the handler thread (start/stop/device events) and
+    // the UI thread, iterated by rumble() on the recv thread and the battery
+    // tick on the handler thread.
+    private val forwarded = ConcurrentHashMap<Int, ForwardedPad>()
     private val nextHandle = AtomicInteger(HANDLE_BASE)
+
+    // Descriptors of pads the user explicitly stopped: guards the auto-forward
+    // on device add/change so a manual Stop is not immediately undone, while a
+    // BT reconnect (device removed → re-added) still resumes streaming.
+    private val suppressed: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
 
     // Stable handle per physical pad. A monotonic counter would mint a fresh
     // handle on every forward toggle or app reconnect, registering the same
@@ -105,12 +114,33 @@ class GamepadSensorForwarder(
     }
 
     private val deviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(deviceId: Int) = refresh()
-        override fun onInputDeviceRemoved(deviceId: Int) {
-            stopForwarding(deviceId)
+        override fun onInputDeviceAdded(deviceId: Int) {
+            autoForward(deviceId)
             refresh()
         }
-        override fun onInputDeviceChanged(deviceId: Int) = refresh()
+        override fun onInputDeviceRemoved(deviceId: Int) {
+            // Device drop (unpair / BT reconnect): tear down streaming but keep
+            // it out of `suppressed` so a re-add auto-resumes it.
+            teardownForwarding(deviceId)
+            refresh()
+        }
+        override fun onInputDeviceChanged(deviceId: Int) {
+            autoForward(deviceId)
+            refresh()
+        }
+    }
+
+    /** Forward a motion-capable pad on add/change while running, unless the user
+     *  explicitly stopped it. */
+    private fun autoForward(deviceId: Int) {
+        if (!_running.value) return
+        if (forwarded.containsKey(deviceId)) return
+        val device = InputDevice.getDevice(deviceId) ?: return
+        if (suppressed.contains(device.descriptor)) return
+        val sm = device.sensorManager
+        val hasMotion = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null &&
+            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
+        if (hasMotion) startForwarding(deviceId)
     }
 
     fun start() {
@@ -118,9 +148,13 @@ class GamepadSensorForwarder(
         _running.value = true
         inputManager.registerInputDeviceListener(deviceListener, handler)
         refresh()
-        // Auto-forward every motion-capable pad already present.
+        // Auto-forward every motion-capable pad already present (that the user
+        // has not explicitly suppressed this session).
         for (entry in _entries.value) {
-            if (entry.hasMotion) startForwarding(entry.deviceId)
+            val descriptor = InputDevice.getDevice(entry.deviceId)?.descriptor
+            if (entry.hasMotion && (descriptor == null || descriptor !in suppressed)) {
+                startForwarding(entry.deviceId)
+            }
         }
     }
 
@@ -132,7 +166,9 @@ class GamepadSensorForwarder(
         } catch (_: Throwable) {
             // not registered — fine
         }
-        for (id in forwarded.keys.toList()) stopForwarding(id)
+        // App-level stop: tear down without suppressing, so a later start()
+        // re-forwards these pads.
+        for (id in forwarded.keys.toList()) teardownForwarding(id)
         refresh()
     }
 
@@ -158,6 +194,8 @@ class GamepadSensorForwarder(
     fun startForwarding(deviceId: Int) {
         if (forwarded.containsKey(deviceId)) return
         val device = InputDevice.getDevice(deviceId) ?: return
+        // Explicit forward clears any prior user Stop for this pad.
+        suppressed.remove(device.descriptor)
         val sm = device.sensorManager
         val gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
         val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
@@ -173,8 +211,11 @@ class GamepadSensorForwarder(
             descriptorHandles.getOrPut(device.descriptor) { nextHandle.getAndIncrement() }
         }
         val pad = ForwardedPad(device, handle, rate)
-        sm.registerListener(pad, accel, SensorManager.SENSOR_DELAY_FASTEST, handler)
-        sm.registerListener(pad, gyro, SensorManager.SENSOR_DELAY_FASTEST, handler)
+        // Request the sensor at the announced rate so delivery matches the
+        // advertised rateHz instead of running unthrottled at FASTEST.
+        val periodUs = 1_000_000 / rate
+        sm.registerListener(pad, accel, periodUs, handler)
+        sm.registerListener(pad, gyro, periodUs, handler)
         forwarded[deviceId] = pad
 
         val hasRumble = device.vibratorManager.vibratorIds.isNotEmpty()
@@ -194,7 +235,15 @@ class GamepadSensorForwarder(
         refresh()
     }
 
+    /** User-initiated stop: suppress auto-forward for this pad until the user
+     *  forwards it again (or the app restarts). */
     fun stopForwarding(deviceId: Int) {
+        InputDevice.getDevice(deviceId)?.let { suppressed.add(it.descriptor) }
+        teardownForwarding(deviceId)
+    }
+
+    /** Tear down streaming for a pad without touching the suppress set. */
+    private fun teardownForwarding(deviceId: Int) {
         val pad = forwarded.remove(deviceId) ?: return
         try {
             pad.device.sensorManager.unregisterListener(pad)

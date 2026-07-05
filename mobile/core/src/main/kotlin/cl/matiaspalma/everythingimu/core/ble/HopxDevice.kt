@@ -38,6 +38,11 @@ class HopxDevice(
     private val parser = HopxProtocol.RecordParser()
     @Volatile private var closed = false
 
+    // Per-device monotonic timestamp cursor: last timestamp emitted to the
+    // listener. Back-dating each notification off its own clock can otherwise
+    // rewind under bursty/batched GATT delivery (zero/negative inter-sample dt).
+    private var lastTimestampUs = Long.MIN_VALUE
+
     fun connect() {
         // The TRANSPORT_LE overload needs API 23; BLE scanning itself is
         // gated on API 31 permissions upstream, so the fallback is theoretical.
@@ -162,10 +167,18 @@ class HopxDevice(
         // Records inside one notification are 1/52 s apart; back-date so each
         // carries a distinct, monotonic timestamp.
         val stepUs = 1_000_000L / HopxProtocol.NATIVE_RATE_HZ
-        val baseUs = nowUs - stepUs * (records.size - 1)
+        val computedBase = nowUs - stepUs * (records.size - 1)
+        // Clamp the batch start so it never precedes the previous batch's last
+        // timestamp, keeping the emitted timeline strictly monotonic.
+        val baseUs = if (lastTimestampUs == Long.MIN_VALUE) {
+            computedBase
+        } else {
+            maxOf(lastTimestampUs + stepUs, computedBase)
+        }
         records.forEachIndexed { i, record ->
             listener.onSample(this, record, baseUs + stepUs * i)
         }
+        lastTimestampUs = baseUs + stepUs * (records.size - 1)
     }
 
     companion object {

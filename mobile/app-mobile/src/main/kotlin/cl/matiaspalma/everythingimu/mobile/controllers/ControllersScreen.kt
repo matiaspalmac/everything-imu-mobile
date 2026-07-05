@@ -1,8 +1,13 @@
 package cl.matiaspalma.everythingimu.mobile.controllers
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.location.LocationManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,7 +36,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.annotation.RequiresApi
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cl.matiaspalma.everythingimu.core.ble.BleDeviceManager
 import cl.matiaspalma.everythingimu.core.gamepad.GamepadKinds
@@ -53,6 +64,17 @@ private fun blePermissions(): Array<String> =
         arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
     }
 
+/**
+ * On Android 6–11 (API < 31) BLE scanning needs the location master toggle ON
+ * in addition to the permission; without it startScan returns zero results.
+ * On API 31+ scanning uses BLUETOOTH_SCAN and does not depend on location.
+ */
+private fun locationReady(ctx: Context): Boolean {
+    if (Build.VERSION.SDK_INT >= 31) return true
+    val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return true
+    return LocationManagerCompat.isLocationEnabled(lm)
+}
+
 @Composable
 fun ControllersScreen() {
     val ctx = LocalContext.current
@@ -64,9 +86,37 @@ fun ControllersScreen() {
             ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED
         })
     }
+    var locationOn by remember { mutableStateOf(locationReady(ctx)) }
+    val activity = ctx as? android.app.Activity
+    // After a request comes back denied and no rationale can be shown, the
+    // permission was permanently denied ("Don't ask again") — the request
+    // button is then a no-op, so we route the user to App Settings instead.
+    var permanentlyDenied by remember { mutableStateOf(false) }
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { result -> granted = result.values.all { it } }
+    ) { result ->
+        granted = result.values.all { it }
+        permanentlyDenied = !granted && activity != null && blePermissions().any {
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+        }
+    }
+
+    // Re-read on resume: granting/revoking in App Settings or toggling the
+    // location master switch happens outside this screen, so a value captured
+    // once at first composition goes stale.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                granted = blePermissions().all {
+                    ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED
+                }
+                locationOn = locationReady(ctx)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val entries by (manager?.entries ?: emptyEntries).collectAsStateWithLifecycle()
     val scanning by (manager?.scanning ?: falseFlow).collectAsStateWithLifecycle()
@@ -97,12 +147,25 @@ fun ControllersScreen() {
 
             if (!granted) {
                 Button(
-                    onClick = { permLauncher.launch(blePermissions()) },
+                    onClick = {
+                        if (permanentlyDenied) {
+                            runCatching {
+                                ctx.startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.fromParts("package", ctx.packageName, null),
+                                    ),
+                                )
+                            }
+                        } else {
+                            permLauncher.launch(blePermissions())
+                        }
+                    },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = EimuPalette.Accent,
                         contentColor = EimuPalette.BgBase,
                     ),
-                ) { Text(t.controllers_perm) }
+                ) { Text(if (permanentlyDenied) "Open app settings" else t.controllers_perm) }
             } else {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -122,6 +185,23 @@ fun ControllersScreen() {
                             strokeWidth = 2.dp,
                         )
                     }
+                }
+                if (!locationOn) {
+                    // API < 31: BLE scanning silently returns nothing while the
+                    // location master toggle is off, so surface it explicitly.
+                    Text(
+                        "Turn on Location to scan for Bluetooth devices (Android 11 and older).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = EimuPalette.Warn,
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            ctx.startActivity(
+                                Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        },
+                    ) { Text("Open location settings", color = EimuPalette.Accent) }
                 }
             }
 

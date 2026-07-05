@@ -1,5 +1,6 @@
 package cl.matiaspalma.everythingimu.core.ble
 
+import android.util.Log
 import java.util.UUID
 
 enum class Jc2Kind { Left, Right, Pro }
@@ -24,6 +25,8 @@ data class Jc2Report(
  * write helper that takes an arbitrary sub-command byte.
  */
 object Jc2Protocol {
+    private const val TAG = "Jc2Protocol"
+
     const val NINTENDO_MFR_ID = 0x0553
 
     val INPUT_COMMON_UUID: UUID = UUID.fromString("ab7de9be-89fe-49ad-828f-118f09df7fd2")
@@ -54,13 +57,24 @@ object Jc2Protocol {
             }
         }
         // Fallback: legacy advert byte-4 hint, then assume a Joy-Con so a valid
-        // Switch 2 advert with no recognizable PID is never dropped.
-        return when (data[4].toInt() and 0xFF) {
+        // Switch 2 advert with no recognizable PID is never dropped. Unlike the
+        // desktop, mobile does not read flash PID (0x13012) over GATT to confirm
+        // the kind, so the axis remap (Left vs Right sign flips on gyro+accel)
+        // may be inverted for an advert that lacks the embedded PID.
+        val hint = data[4].toInt() and 0xFF
+        val kind = when (hint) {
             0x06 -> Jc2Kind.Left
             0x05 -> Jc2Kind.Right
             0x09 -> Jc2Kind.Pro
             else -> Jc2Kind.Right
         }
+        Log.w(
+            TAG,
+            "JC2 advert carries no recognizable PID; using unreliable byte-4 hint " +
+                "0x${hint.toString(16)} -> $kind (axis remap may be inverted, " +
+                "no flash-PID correction)",
+        )
+        return kind
     }
 
     fun buildFeatureSelectCmd(subcmd: Byte, mask: Byte): ByteArray = byteArrayOf(

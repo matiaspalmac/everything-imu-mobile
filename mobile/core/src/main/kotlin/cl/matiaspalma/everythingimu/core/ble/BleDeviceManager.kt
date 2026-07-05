@@ -10,6 +10,7 @@ import android.content.Context
 import android.util.Log
 import cl.matiaspalma.everythingimu.core.net.EimuClient
 import cl.matiaspalma.everythingimu.core.net.EimuProtocol
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,9 +50,11 @@ class BleDeviceManager(
     private val _scanning = MutableStateFlow(false)
     val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
-    private val jc2Devices = HashMap<String, Jc2Device>()
-    private val hopxDevices = HashMap<String, HopxDevice>()
-    private val handles = HashMap<String, Int>()
+    // Concurrent: mutated on Bluetooth binder threads (onReady/onDisconnected)
+    // and iterated by rumble()/shutdown() on other threads.
+    private val jc2Devices = ConcurrentHashMap<String, Jc2Device>()
+    private val hopxDevices = ConcurrentHashMap<String, HopxDevice>()
+    private val handles = ConcurrentHashMap<String, Int>()
     private val nextHandle = AtomicInteger(1)
 
     private val scanner
@@ -101,24 +104,33 @@ class BleDeviceManager(
         val entry = _entries.value.firstOrNull { it.address == address } ?: return
         if (jc2Devices.containsKey(address) || hopxDevices.containsKey(address)) return
         update(address) { it.copy(state = Entry.State.Connecting) }
-        val bt = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
-            .adapter.getRemoteDevice(address)
-        when (entry.kind) {
-            BleKind.Hopx -> {
-                val dev = HopxDevice(context, bt, hopxListener)
-                hopxDevices[address] = dev
-                dev.connect()
-            }
-            else -> {
-                val kind = when (entry.kind) {
-                    BleKind.Jc2Left -> Jc2Kind.Left
-                    BleKind.Jc2Right -> Jc2Kind.Right
-                    else -> Jc2Kind.Pro
+        try {
+            val bt = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
+                .adapter.getRemoteDevice(address)
+            when (entry.kind) {
+                BleKind.Hopx -> {
+                    val dev = HopxDevice(context, bt, hopxListener)
+                    hopxDevices[address] = dev
+                    dev.connect()
                 }
-                val dev = Jc2Device(context, bt, kind, jc2Listener)
-                jc2Devices[address] = dev
-                dev.connect()
+                else -> {
+                    val kind = when (entry.kind) {
+                        BleKind.Jc2Left -> Jc2Kind.Left
+                        BleKind.Jc2Right -> Jc2Kind.Right
+                        else -> Jc2Kind.Pro
+                    }
+                    val dev = Jc2Device(context, bt, kind, jc2Listener)
+                    jc2Devices[address] = dev
+                    dev.connect()
+                }
             }
+        } catch (e: SecurityException) {
+            // connectGatt reached without BLUETOOTH_CONNECT (UI gate bypassed):
+            // clean up any partial device and revert the row to Found.
+            Log.w(TAG, "connect failed (missing BLUETOOTH_CONNECT?)", e)
+            jc2Devices.remove(address)?.close()
+            hopxDevices.remove(address)?.close()
+            update(address) { it.copy(state = Entry.State.Found, handle = -1) }
         }
     }
 
@@ -185,7 +197,7 @@ class BleDeviceManager(
 
     private val jc2Listener = object : Jc2Device.Listener {
         override fun onReady(device: Jc2Device) {
-            val handle = handles.getOrPut(device.address) { nextHandle.getAndIncrement() }
+            val handle = handles.computeIfAbsent(device.address) { nextHandle.getAndIncrement() }
             val kindWire = when (device.kind) {
                 Jc2Kind.Left -> EimuProtocol.KIND_JOYCON2_L
                 Jc2Kind.Right -> EimuProtocol.KIND_JOYCON2_R
@@ -232,7 +244,7 @@ class BleDeviceManager(
 
     private val hopxListener = object : HopxDevice.Listener {
         override fun onReady(device: HopxDevice) {
-            val handle = handles.getOrPut(device.address) { nextHandle.getAndIncrement() }
+            val handle = handles.computeIfAbsent(device.address) { nextHandle.getAndIncrement() }
             eimuClient()?.announceDevice(
                 EimuClient.AnnouncedDevice(
                     handle = handle,

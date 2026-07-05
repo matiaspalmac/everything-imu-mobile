@@ -49,6 +49,7 @@ class Jc2Device(
     private val resetDetector = Jc2ResetDetector()
     private var lastBattery = Float.NaN
     @Volatile private var closed = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun connect() {
         // The TRANSPORT_LE overload needs API 23; BLE scanning itself is
@@ -77,6 +78,11 @@ class Jc2Device(
      *  failing to close it on an involuntary drop leaks the interface until the
      *  ~32-slot pool is exhausted and every connect fails with status 133. */
     private fun releaseGatt() {
+        // Mark torn-down and cancel the pending feature-select/onReady runnable
+        // so an involuntary mid-handshake STATE_DISCONNECTED cannot still fire a
+        // phantom onReady that announces a tracker whose gatt is already dead.
+        closed = true
+        mainHandler.removeCallbacksAndMessages(null)
         try {
             gatt?.disconnect()
             gatt?.close()
@@ -160,8 +166,11 @@ class Jc2Device(
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             // CCCD armed → IMU enable sequence: select features then enable.
             write(Jc2Protocol.buildFeatureSelectCmd(0x02, 0xFF.toByte()))
-            Handler(Looper.getMainLooper()).postDelayed({
-                if (closed) return@postDelayed
+            mainHandler.postDelayed({
+                // Bail if the link was torn down during the 500 ms window: a
+                // mid-handshake drop sets closed + nulls gatt, so onReady must
+                // not mint a handle for a dead connection.
+                if (closed || gatt == null) return@postDelayed
                 write(Jc2Protocol.buildFeatureSelectCmd(0x04, 0xFF.toByte()))
                 listener.onReady(this@Jc2Device)
             }, 500)

@@ -2,8 +2,13 @@ package cl.matiaspalma.everythingimu.core.ble
 
 /**
  * Home short press → Yaw (on release < 1 s). Home held ≥ 1 s → Full (fires
- * once while held). Capture rising edge → Yaw. 300 ms debounce between emits.
- * Same semantics as desktop `device_traits::ResetButtonDetector`.
+ * once while still held). Capture rising edge → Yaw, emitted and returned
+ * before the Home branch so a co-incident Home long-press in the same call
+ * cannot overwrite (drop) it. 300 ms debounce between emits.
+ *
+ * NOTE: desktop `device_traits::ResetButtonDetector` decides Full-vs-Yaw only
+ * on the Home *release* edge, whereas this detector fires Full while the button
+ * is still held, so the long-press timing is not byte-identical to desktop.
  */
 class Jc2ResetDetector {
     enum class Reset { Yaw, Full }
@@ -14,14 +19,18 @@ class Jc2ResetDetector {
     private var lastEmitNanos: Long = Long.MIN_VALUE / 2
 
     fun observe(home: Boolean, capture: Boolean, nowNanos: Long): Reset? {
-        var out: Reset? = null
         val inDebounce = nowNanos - lastEmitNanos < DEBOUNCE_NANOS
 
-        if (capture && !capturePrev && !inDebounce) {
-            out = Reset.Yaw
-            lastEmitNanos = nowNanos
-        }
+        // Capture button: Yaw on the press edge only. Return immediately after
+        // emitting so a co-incident Home event in the same call cannot reuse the
+        // (now stale) inDebounce and overwrite this Yaw with a Full.
+        val captureEdge = capture && !capturePrev
         capturePrev = capture
+        if (captureEdge) {
+            if (inDebounce) return null
+            lastEmitNanos = nowNanos
+            return Reset.Yaw
+        }
 
         if (home) {
             if (homePressedSinceNanos < 0) {
@@ -30,18 +39,19 @@ class Jc2ResetDetector {
             } else if (!longFired && nowNanos - homePressedSinceNanos >= LONG_NANOS && !inDebounce) {
                 longFired = true
                 lastEmitNanos = nowNanos
-                out = Reset.Full
+                return Reset.Full
             }
         } else if (homePressedSinceNanos >= 0) {
             val held = nowNanos - homePressedSinceNanos
             homePressedSinceNanos = -1
-            if (!longFired && held < LONG_NANOS && !inDebounce && out == null) {
-                lastEmitNanos = nowNanos
-                out = Reset.Yaw
-            }
+            val alreadyFired = longFired
             longFired = false
+            if (!alreadyFired && held < LONG_NANOS && !inDebounce) {
+                lastEmitNanos = nowNanos
+                return Reset.Yaw
+            }
         }
-        return out
+        return null
     }
 
     companion object {
