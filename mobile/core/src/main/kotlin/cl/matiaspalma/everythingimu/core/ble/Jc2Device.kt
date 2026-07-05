@@ -69,11 +69,19 @@ class Jc2Device(
 
     fun close() {
         closed = true
+        releaseGatt()
+    }
+
+    /** Idempotently disconnect and release the native GATT client interface.
+     *  connectGatt(autoConnect=false) allocates one client_if per BluetoothGatt;
+     *  failing to close it on an involuntary drop leaks the interface until the
+     *  ~32-slot pool is exhausted and every connect fails with status 133. */
+    private fun releaseGatt() {
         try {
             gatt?.disconnect()
             gatt?.close()
         } catch (t: Throwable) {
-            Log.w(TAG, "close failed", t)
+            Log.w(TAG, "gatt release failed", t)
         }
         gatt = null
     }
@@ -102,7 +110,12 @@ class Jc2Device(
                 g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
                 if (!g.requestMtu(247)) g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                if (!closed) listener.onDisconnected(this@Jc2Device)
+                // Remote-initiated drop: release the GATT interface before
+                // notifying so it is not leaked (only user-driven close() did
+                // this before).
+                val notify = !closed
+                releaseGatt()
+                if (notify) listener.onDisconnected(this@Jc2Device)
             }
         }
 
@@ -124,6 +137,9 @@ class Jc2Device(
             val inputChar = input
             if (inputChar == null || writeChar == null) {
                 Log.w(TAG, "jc2 characteristics not found; disconnecting")
+                // Link is live but unusable — release the GATT interface so it
+                // is not leaked while we abandon the connection.
+                releaseGatt()
                 listener.onDisconnected(this@Jc2Device)
                 return
             }
