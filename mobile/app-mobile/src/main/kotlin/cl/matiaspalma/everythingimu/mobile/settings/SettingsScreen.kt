@@ -110,7 +110,8 @@ fun SettingsScreen() {
         port = TrackingController.savedPort().toString()
         uuid = TrackingController.deviceUuid()
     }
-    val portValid by remember(port) { derivedStateOf { port.toIntOrNull() != null } }
+    val portValid by
+        remember(port) { derivedStateOf { port.toIntOrNull()?.let { it in 1..65535 } == true } }
     var diagnostics by remember { mutableStateOf<DiagnosticsReport?>(null) }
     var diagnosing by remember { mutableStateOf(false) }
 

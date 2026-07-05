@@ -80,9 +80,12 @@ class EimuClient(
     fun connect(host: String, port: Int) {
         disconnect()
         _state.value = ConnectionState.Connecting
-        val target = InetSocketAddress(host, port)
-        endpoint = target
         try {
+            // Inside the try as defense-in-depth: a persisted out-of-range port
+            // makes InetSocketAddress throw IllegalArgumentException, which must
+            // surface as a Failed state rather than crash the caller coroutine.
+            val target = InetSocketAddress(host, port)
+            endpoint = target
             socket = DatagramSocket().apply { soTimeout = 250 }
             Log.i(tag, "eimu socket bound localPort=${socket?.localPort} -> $host:$port")
             lastAckNanos = 0L
