@@ -83,6 +83,10 @@ class SensorRepository(context: Context) : SensorEventListener {
 
     private var engine: VqfEngine? = null
 
+    // Latched once the native fusion library is confirmed unavailable, so we
+    // stop re-attempting engine creation every sample and fall back exactly once.
+    private var fusionUnavailable = false
+
     /**
      * Measured gyro delivery rate (Hz). VQF integrates with a fixed timestep
      * `1/rate`; if it doesn't match the device's true rate the filter
@@ -190,6 +194,16 @@ class SensorRepository(context: Context) : SensorEventListener {
         if (!running) return
         running = false
         sensorManager.unregisterListener(this)
+        // Invalidate the cross-sensor cache so a resume can't feed pre-pause
+        // accel/mag into fusion or the raw-sink before fresh samples arrive
+        // (orientation snap / stale accel packet on the wire). runFusion and the
+        // raw-sink are both gated on latestAccel, so nulling it stalls them until
+        // a live accel sample lands. Also reset the gravity low-pass.
+        latestAccel = null
+        latestMag = null
+        linearAccel = null
+        gravityInit = false
+        gravityLp[0] = 0f; gravityLp[1] = 0f; gravityLp[2] = 0f
     }
 
     fun release() {
@@ -209,7 +223,7 @@ class SensorRepository(context: Context) : SensorEventListener {
                 maybeInitEngine(ts)
                 val corrected = applyGyroBias(v, ts)
                 pendingSnapshot = pendingSnapshot.copy(gyro = SensorSample(corrected, ts, acc, false))
-                emitSnapshot(ts)
+                emitSnapshot()
                 runFusion(corrected)
                 rawSampleSink?.let { sink ->
                     latestAccel?.let { a -> sink(corrected, a, if (magInputEnabled) latestMag else null, ts) }
@@ -220,7 +234,7 @@ class SensorRepository(context: Context) : SensorEventListener {
                 maybeInitEngine(ts)
                 val corrected = applyGyroBias(v, ts)
                 pendingSnapshot = pendingSnapshot.copy(gyro = SensorSample(corrected, ts, acc, true))
-                emitSnapshot(ts)
+                emitSnapshot()
                 runFusion(corrected)
                 rawSampleSink?.let { sink ->
                     latestAccel?.let { a -> sink(corrected, a, if (magInputEnabled) latestMag else null, ts) }
@@ -229,7 +243,7 @@ class SensorRepository(context: Context) : SensorEventListener {
             Sensor.TYPE_ACCELEROMETER -> {
                 accelCount++
                 pendingSnapshot = pendingSnapshot.copy(accel = SensorSample(v, ts, acc, false))
-                emitSnapshot(ts)
+                emitSnapshot()
                 latestAccel = event.values.copyOf(3)
                 updateLinearAccel(event.values)
                 shakeListener?.invoke(kotlin.math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z))
@@ -237,7 +251,7 @@ class SensorRepository(context: Context) : SensorEventListener {
             Sensor.TYPE_ACCELEROMETER_UNCALIBRATED -> {
                 accelCount++
                 pendingSnapshot = pendingSnapshot.copy(accel = SensorSample(v, ts, acc, true))
-                emitSnapshot(ts)
+                emitSnapshot()
                 latestAccel = event.values.copyOf(3)
                 updateLinearAccel(event.values)
                 shakeListener?.invoke(kotlin.math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z))
@@ -247,7 +261,7 @@ class SensorRepository(context: Context) : SensorEventListener {
                 magSampleSink?.invoke(v)
                 val calibrated = magCalibration.transform(v)
                 pendingSnapshot = pendingSnapshot.copy(mag = SensorSample(calibrated, ts, acc, false))
-                emitSnapshot(ts)
+                emitSnapshot()
                 latestMag = floatArrayOf(calibrated.x, calibrated.y, calibrated.z)
             }
             Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED -> {
@@ -255,7 +269,7 @@ class SensorRepository(context: Context) : SensorEventListener {
                 magSampleSink?.invoke(v)
                 val calibrated = magCalibration.transform(v)
                 pendingSnapshot = pendingSnapshot.copy(mag = SensorSample(calibrated, ts, acc, true))
-                emitSnapshot(ts)
+                emitSnapshot()
                 latestMag = floatArrayOf(calibrated.x, calibrated.y, calibrated.z)
             }
             Sensor.TYPE_GAME_ROTATION_VECTOR -> {
@@ -266,13 +280,20 @@ class SensorRepository(context: Context) : SensorEventListener {
                 }
             }
         }
-        maybeFlushRates(ts)
+        maybeFlushRates()
     }
 
-    private fun emitSnapshot(nowNanos: Long) {
-        if (nowNanos - lastSnapshotEmitNanos >= UI_SNAPSHOT_INTERVAL_NANOS) {
+    // Throttle off the monotonic System.nanoTime() rather than the per-sensor
+    // event.timestamp: different sensors can use divergent clock bases (or emit a
+    // 0 first timestamp), which against a single shared cursor yields negative or
+    // huge deltas that stall or spam emission. The backwards-delta guard also
+    // re-syncs the cursor if the clock ever appears to go back.
+    private fun emitSnapshot() {
+        val now = System.nanoTime()
+        val delta = now - lastSnapshotEmitNanos
+        if (delta < 0L || delta >= UI_SNAPSHOT_INTERVAL_NANOS) {
             _snapshot.value = pendingSnapshot
-            lastSnapshotEmitNanos = nowNanos
+            lastSnapshotEmitNanos = now
         }
     }
 
@@ -292,7 +313,7 @@ class SensorRepository(context: Context) : SensorEventListener {
      * over the hardware-timestamp span, clamped to a sane band.
      */
     private fun maybeInitEngine(ts: Long) {
-        if (engine != null || !fusionEnabled || ts <= 0L) return
+        if (engine != null || fusionUnavailable || !fusionEnabled || ts <= 0L) return
         warmupCount++
         if (warmupCount <= WARMUP_SKIP) {
             warmupFirstTs = ts
@@ -305,6 +326,18 @@ class SensorRepository(context: Context) : SensorEventListener {
             .coerceIn(MIN_RATE_HZ, MAX_RATE_HZ)
         measuredRateHz = rate
         engine = VqfEngine.create(sampleRateHz = rate)
+        if (engine == null && !VqfEngine.isAvailable()) {
+            // The native fusion library failed to load: without a fallback the
+            // engine stays null forever, runFusion early-returns every sample,
+            // and the preview quaternion is frozen at IDENTITY with no signal.
+            // Latch so we don't retry, and auto-switch to the OS Game Rotation
+            // Vector (when present) so the on-device orientation keeps updating.
+            fusionUnavailable = true
+            if (rotationVectorAvailable && !useOsRotation) {
+                useOsRotation = true
+            }
+            android.util.Log.w("SensorRepository", "native VQF unavailable; falling back to OS rotation")
+        }
     }
 
     private fun runFusion(gyroCorrected: Vec3) {
@@ -324,12 +357,19 @@ class SensorRepository(context: Context) : SensorEventListener {
         // No-op: accuracy lands on each event already.
     }
 
-    private fun maybeFlushRates(nowNanos: Long) {
+    private fun maybeFlushRates() {
+        val now = System.nanoTime()
         if (rateWindowStartNanos == 0L) {
-            rateWindowStartNanos = nowNanos
+            rateWindowStartNanos = now
             return
         }
-        val elapsed = nowNanos - rateWindowStartNanos
+        val elapsed = now - rateWindowStartNanos
+        // Guard non-positive/backwards deltas (divergent clock bases or a clock
+        // step): re-anchor the window instead of computing garbage Hz.
+        if (elapsed <= 0L) {
+            rateWindowStartNanos = now
+            return
+        }
         if (elapsed < RATE_WINDOW_NANOS) return
         val seconds = elapsed / 1_000_000_000.0f
         _rates.value = SensorRates(
@@ -340,7 +380,7 @@ class SensorRepository(context: Context) : SensorEventListener {
         gyroCount = 0
         accelCount = 0
         magCount = 0
-        rateWindowStartNanos = nowNanos
+        rateWindowStartNanos = now
     }
 
     companion object {

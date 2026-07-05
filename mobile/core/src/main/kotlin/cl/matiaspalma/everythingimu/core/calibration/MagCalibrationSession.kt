@@ -52,9 +52,17 @@ class MagCalibrationSession(
 
     /** Accept the current best-fit. Returns null if not yet good enough. */
     fun accept(): MagCalibration? {
+        // Detach the sink first so the sensor thread cannot mutate the
+        // calibrator's extents while finish() reads them (torn snapshot).
+        active = false
+        // Enforce the documented completion criteria, not just non-identity: a
+        // barely-collected session with a tiny-spread axis yields a blown-up
+        // scale that still passes isIdentity.
+        if (calibrator.minSpread() < minSpreadTarget || calibrator.sampleCount() < minSamples) {
+            return null
+        }
         val result = calibrator.finish()
         if (result.isIdentity) return null
-        active = false
         return result
     }
 

@@ -54,6 +54,7 @@ class VqfEngine private constructor(private var handle: Long) : AutoCloseable {
 
     companion object {
         @Volatile private var loaded: Boolean = false
+        @Volatile private var loadAttempted: Boolean = false
 
         @Synchronized
         fun isAvailable(): Boolean {
@@ -63,7 +64,12 @@ class VqfEngine private constructor(private var handle: Long) : AutoCloseable {
 
         @Synchronized
         private fun ensureLoaded() {
-            if (loaded) return
+            // Attempt the dlopen exactly once. Track "attempted" separately from
+            // "loaded": on failure `loaded` stays false, so guarding on `loaded`
+            // alone re-ran the failing System.loadLibrary (and Log.e) on every
+            // sensor sample. Latching `loadAttempted` stops that spam.
+            if (loadAttempted) return
+            loadAttempted = true
             loaded = try {
                 System.loadLibrary("jni_android")
                 true

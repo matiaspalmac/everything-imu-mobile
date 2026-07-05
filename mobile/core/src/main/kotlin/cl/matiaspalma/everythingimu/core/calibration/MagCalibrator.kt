@@ -40,6 +40,11 @@ class MagCalibrator {
     }
 
     fun addSample(sample: Vec3) {
+        // Drop non-finite samples before they reach the min/max fold: NaN
+        // propagates through kotlin.math.min/max and every downstream guard is a
+        // comparison that is false for NaN, so a single bad sample would poison
+        // the committed (and persisted) calibration.
+        if (!sample.x.isFinite() || !sample.y.isFinite() || !sample.z.isFinite()) return
         minX = min(minX, sample.x); minY = min(minY, sample.y); minZ = min(minZ, sample.z)
         maxX = max(maxX, sample.x); maxY = max(maxY, sample.y); maxZ = max(maxZ, sample.z)
         count += 1
@@ -65,7 +70,15 @@ class MagCalibrator {
 
     fun finish(): MagCalibration {
         if (count < 32 || minSpread() <= 0f) return MagCalibration.IDENTITY
-        return computeUnsafe()
+        val result = computeUnsafe()
+        // Never commit/persist a non-finite calibration: transform() would emit
+        // NaN into the MARG fusion path / the wire.
+        if (!result.offset.x.isFinite() || !result.offset.y.isFinite() || !result.offset.z.isFinite() ||
+            !result.scale.x.isFinite() || !result.scale.y.isFinite() || !result.scale.z.isFinite()
+        ) {
+            return MagCalibration.IDENTITY
+        }
+        return result
     }
 
     private fun computeUnsafe(): MagCalibration {
@@ -77,10 +90,27 @@ class MagCalibrator {
         val rz = (maxZ - minZ) * 0.5f
         val avg = (rx + ry + rz) / 3f
         if (rx <= 0f || ry <= 0f || rz <= 0f || avg <= 0f) return MagCalibration.IDENTITY
+        // Clamp soft-iron scale to a sane band: a tiny-spread axis makes avg/r
+        // blow up, so a barely-collected (or spiked) session would otherwise
+        // emit a runaway scale that distorts every mag sample.
+        val sx = (avg / rx).coerceIn(MIN_SCALE, MAX_SCALE)
+        val sy = (avg / ry).coerceIn(MIN_SCALE, MAX_SCALE)
+        val sz = (avg / rz).coerceIn(MIN_SCALE, MAX_SCALE)
+        if (!cx.isFinite() || !cy.isFinite() || !cz.isFinite() ||
+            !sx.isFinite() || !sy.isFinite() || !sz.isFinite()
+        ) {
+            return MagCalibration.IDENTITY
+        }
         return MagCalibration(
             offset = Vec3(cx, cy, cz),
-            scale = Vec3(avg / rx, avg / ry, avg / rz),
+            scale = Vec3(sx, sy, sz),
         )
+    }
+
+    companion object {
+        // Sane band for the per-axis soft-iron scale.
+        private const val MIN_SCALE = 0.1f
+        private const val MAX_SCALE = 10f
     }
 }
 
