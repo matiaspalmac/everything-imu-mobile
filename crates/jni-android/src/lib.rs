@@ -146,14 +146,18 @@ mod android_bindings {
         let _ = env.set_float_array_region(&out, 0, &buf);
     }
 
+    /// Returns the 9-DOF quaternion, falling back to 6-DOF until a magnetometer
+    /// sample has been fed. `quat_9d` asserts on `mag_seen`, and under the
+    /// release `panic = "abort"` that assert aborts the whole process —
+    /// `catch_unwind` cannot catch an abort — so guard with the flag instead of
+    /// relying on unwinding.
     fn catch_quat_9d(vqf: &Vqf) -> [f32; 4] {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vqf.quat_9d())) {
-            Ok(q) => [q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32],
-            Err(_) => {
-                let q = vqf.quat_6d();
-                [q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32]
-            }
-        }
+        let q = if vqf.mag_seen() {
+            vqf.quat_9d()
+        } else {
+            vqf.quat_6d()
+        };
+        [q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32]
     }
 }
 

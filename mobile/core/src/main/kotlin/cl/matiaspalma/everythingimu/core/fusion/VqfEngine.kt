@@ -27,7 +27,13 @@ class VqfEngine private constructor(private var handle: Long) : AutoCloseable {
     ) {
         if (handle == 0L) return
         VqfNative.nativeUpdateMarg(handle, gx, gy, gz, ax, ay, az, mx, my, mz)
-        magSeen = true
+        // Match the native update_mag latch: an exactly-zero magnetometer vector
+        // is rejected and does NOT mark mag as seen. Setting the flag anyway let
+        // quaternion() route to the 9-DOF native path while Rust still had
+        // mag_seen == false, which asserts (and aborts) on that side.
+        if (mx != 0f || my != 0f || mz != 0f) {
+            magSeen = true
+        }
     }
 
     /** Latest fused quaternion as (w, x, y, z). */
