@@ -109,7 +109,11 @@ fn vqf_oracle_quat9d_heading_path() {
             .iter()
             .map(|row| {
                 let r = row.as_array().unwrap();
-                [r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap()]
+                [
+                    r[0].as_f64().unwrap(),
+                    r[1].as_f64().unwrap(),
+                    r[2].as_f64().unwrap(),
+                ]
             })
             .collect()
     };
@@ -126,7 +130,10 @@ fn vqf_oracle_quat9d_heading_path() {
 
     // 1. finite unit quaternion
     let norm = (q9[0] * q9[0] + q9[1] * q9[1] + q9[2] * q9[2] + q9[3] * q9[3]).sqrt();
-    assert!(q9.iter().all(|c| c.is_finite()), "quat_9d has non-finite component: {q9:?}");
+    assert!(
+        q9.iter().all(|c| c.is_finite()),
+        "quat_9d has non-finite component: {q9:?}"
+    );
     assert!((norm - 1.0).abs() < 1e-9, "quat_9d not unit: norm {norm}");
 
     // 2. heading-only correction: inclination (earth-Z of the body up-axis) preserved
@@ -142,12 +149,7 @@ fn vqf_oracle_quat9d_heading_path() {
 
     // 3. golden final quaternion (captured from the corrected update_mag path).
     // Regenerate only if the fusion math legitimately changes.
-    let golden = [
-        0.877_522_997_012_223_2,
-        0.0,
-        0.0,
-        0.479_534_555_287_401_24,
-    ];
+    let golden = [0.877_522_997_012_223_2, 0.0, 0.0, 0.479_534_555_287_401_24];
     let sign = (0..4).map(|c| q9[c] * golden[c]).sum::<f64>().signum();
     for c in 0..4 {
         assert!(
