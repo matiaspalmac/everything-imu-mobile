@@ -16,7 +16,9 @@ data class EulerAngles(val yaw: Float, val pitch: Float, val roll: Float)
 
 fun Quaternion.normalized(): Quaternion {
     val mag = sqrt(w * w + x * x + y * y + z * z)
-    if (mag == 0f) return Quaternion.IDENTITY
+    // A NaN/Inf component makes `mag` non-finite; `NaN == 0f` is false, so guard
+    // both here and fall back to IDENTITY rather than propagate a bad rotation.
+    if (!mag.isFinite() || mag <= 0f) return Quaternion.IDENTITY
     return Quaternion(w / mag, x / mag, y / mag, z / mag)
 }
 

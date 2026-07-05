@@ -7,6 +7,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -14,8 +15,10 @@ import androidx.datastore.preferences.preferencesDataStore
 import cl.matiaspalma.everythingimu.core.calibration.CalibrationData
 import cl.matiaspalma.everythingimu.core.calibration.MagCalibration
 import cl.matiaspalma.everythingimu.core.sensors.Vec3
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -26,35 +29,42 @@ class AppPrefs(context: Context) {
     private val appContext = context.applicationContext
     private val store: DataStore<Preferences> = appContext.preferencesStore
 
-    val serviceWanted: Flow<Boolean> = store.data.map { it[KEY_SERVICE_WANTED] ?: false }
-    val serverHost: Flow<String> = store.data.map { it[KEY_HOST] ?: "" }
-    val serverPort: Flow<Int> = store.data.map { it[KEY_PORT] ?: 6969 }
+    // Guard reads: a DataStore IOException (disk corruption, Direct Boot, some
+    // OEM ROMs) must emit empty prefs (all defaults) rather than throw and kill
+    // the collecting coroutine / the init deferred before it can complete.
+    // Writes still surface their own errors.
+    private val guardedData: Flow<Preferences> =
+        store.data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+
+    val serviceWanted: Flow<Boolean> = guardedData.map { it[KEY_SERVICE_WANTED] ?: false }
+    val serverHost: Flow<String> = guardedData.map { it[KEY_HOST] ?: "" }
+    val serverPort: Flow<Int> = guardedData.map { it[KEY_PORT] ?: 6969 }
 
     /**
      * What the hub streams: "tracker" (default — phone IMU only),
      * "gamepads" (controllers only, phone is not a tracker), or
      * "both" (phone tracker + forwarded gamepads).
      */
-    val hubRole: Flow<String> = store.data.map { it[KEY_HUB_ROLE] ?: "tracker" }
-    val autoConnect: Flow<Boolean> = store.data.map { it[KEY_AUTO_CONNECT] ?: true }
-    val deviceUuid: Flow<String> = store.data.map { it[KEY_UUID] ?: "" }
+    val hubRole: Flow<String> = guardedData.map { it[KEY_HUB_ROLE] ?: "tracker" }
+    val autoConnect: Flow<Boolean> = guardedData.map { it[KEY_AUTO_CONNECT] ?: true }
+    val deviceUuid: Flow<String> = guardedData.map { it[KEY_UUID] ?: "" }
     val sensorWarningDismissed: Flow<Boolean> =
-        store.data.map { it[KEY_SENSOR_WARNING_DISMISSED] ?: false }
-    val language: Flow<String> = store.data.map { it[KEY_LANGUAGE] ?: "en" }
-    val themeMode: Flow<String> = store.data.map { it[KEY_THEME] ?: "dark" }
-    val sendRateHz: Flow<Int> = store.data.map { it[KEY_SEND_RATE] ?: 100 }
+        guardedData.map { it[KEY_SENSOR_WARNING_DISMISSED] ?: false }
+    val language: Flow<String> = guardedData.map { it[KEY_LANGUAGE] ?: "en" }
+    val themeMode: Flow<String> = guardedData.map { it[KEY_THEME] ?: "dark" }
+    val sendRateHz: Flow<Int> = guardedData.map { it[KEY_SEND_RATE] ?: 100 }
     // Default OFF: a raw, uncalibrated magnetometer near a PC/monitor (the
     // typical VR setup) drags VQF's heading and causes yaw drift at rest.
     // owoTrack and moveTrackVR default mag off for the same reason. Users can
     // opt in via the toggle after running the figure-8 calibration.
-    val magEnabled: Flow<Boolean> = store.data.map { it[KEY_MAG_ENABLED] ?: false }
-    val shakeRecenter: Flow<Boolean> = store.data.map { it[KEY_SHAKE_RECENTER] ?: true }
+    val magEnabled: Flow<Boolean> = guardedData.map { it[KEY_MAG_ENABLED] ?: false }
+    val shakeRecenter: Flow<Boolean> = guardedData.map { it[KEY_SHAKE_RECENTER] ?: true }
 
     // false = on-device VQF (default). true = OS Game Rotation Vector (owoTrack-style).
-    val useOsRotation: Flow<Boolean> = store.data.map { it[KEY_OS_ROTATION] ?: false }
+    val useOsRotation: Flow<Boolean> = guardedData.map { it[KEY_OS_ROTATION] ?: false }
 
     // Start the OSC haptic server automatically on connect.
-    val autostartHaptics: Flow<Boolean> = store.data.map { it[KEY_AUTOSTART_HAPTICS] ?: false }
+    val autostartHaptics: Flow<Boolean> = guardedData.map { it[KEY_AUTOSTART_HAPTICS] ?: false }
 
     suspend fun setLanguage(code: String) {
         store.edit { it[KEY_LANGUAGE] = code }
@@ -104,17 +114,26 @@ class AppPrefs(context: Context) {
     }
 
     suspend fun deviceUuidOrCreate(): String {
-        val prefs = store.data.first()
-        val current = prefs[KEY_UUID].orEmpty()
-        val androidId = readAndroidId().ifBlank { "unknown" }
-        val storedAndroidId = prefs[KEY_ANDROID_ID].orEmpty()
-        if (current.isNotBlank() && storedAndroidId == androidId) return current
-        val fresh = UUID.randomUUID().toString()
-        store.edit {
-            it[KEY_UUID] = fresh
-            it[KEY_ANDROID_ID] = androidId
+        val liveAndroidId = readAndroidId()
+        lateinit var result: String
+        // Do the read-decide-generate-write inside one edit so concurrent
+        // callers can't both observe blank and mint diverging UUIDs (TOCTOU).
+        store.edit { prefs ->
+            val current = prefs[KEY_UUID].orEmpty()
+            val storedAndroidId = prefs[KEY_ANDROID_ID].orEmpty()
+            // Keep the existing UUID on a transient blank read (Direct Boot /
+            // pre-unlock / some OEM ROMs) or when the bound id is unchanged;
+            // only rebind on a genuine non-blank change.
+            if (current.isNotBlank() && (liveAndroidId.isBlank() || storedAndroidId == liveAndroidId)) {
+                result = current
+            } else {
+                val fresh = UUID.randomUUID().toString()
+                prefs[KEY_UUID] = fresh
+                prefs[KEY_ANDROID_ID] = liveAndroidId
+                result = fresh
+            }
         }
-        return fresh
+        return result
     }
 
     suspend fun setSensorWarningDismissed(value: Boolean) {
@@ -123,22 +142,27 @@ class AppPrefs(context: Context) {
 
     /** Read the full calibration bundle in a single DataStore round-trip. */
     suspend fun loadCalibration(): CalibrationData {
-        val prefs = store.data.first()
+        val prefs = guardedData.first()
+        // Validate each persisted field before it multiplies into every mag
+        // sample: a NaN/Inf offset or a zero/negative/huge scale must fall back
+        // to the neutral per-axis default rather than be trusted forever.
+        fun offsetOr(v: Float?): Float = if (v != null && v.isFinite()) v else 0f
+        fun scaleOr(v: Float?): Float = if (v != null && v.isFinite() && v in 0.1f..10f) v else 1f
         val bias = Vec3(
-            prefs[KEY_GYRO_BIAS_X] ?: 0f,
-            prefs[KEY_GYRO_BIAS_Y] ?: 0f,
-            prefs[KEY_GYRO_BIAS_Z] ?: 0f,
+            offsetOr(prefs[KEY_GYRO_BIAS_X]),
+            offsetOr(prefs[KEY_GYRO_BIAS_Y]),
+            offsetOr(prefs[KEY_GYRO_BIAS_Z]),
         )
         val mag = MagCalibration(
             offset = Vec3(
-                prefs[KEY_MAG_OFFSET_X] ?: 0f,
-                prefs[KEY_MAG_OFFSET_Y] ?: 0f,
-                prefs[KEY_MAG_OFFSET_Z] ?: 0f,
+                offsetOr(prefs[KEY_MAG_OFFSET_X]),
+                offsetOr(prefs[KEY_MAG_OFFSET_Y]),
+                offsetOr(prefs[KEY_MAG_OFFSET_Z]),
             ),
             scale = Vec3(
-                prefs[KEY_MAG_SCALE_X] ?: 1f,
-                prefs[KEY_MAG_SCALE_Y] ?: 1f,
-                prefs[KEY_MAG_SCALE_Z] ?: 1f,
+                scaleOr(prefs[KEY_MAG_SCALE_X]),
+                scaleOr(prefs[KEY_MAG_SCALE_Y]),
+                scaleOr(prefs[KEY_MAG_SCALE_Z]),
             ),
         )
         return CalibrationData(gyroBias = bias, mag = mag)
@@ -200,6 +224,10 @@ class AppPrefs(context: Context) {
 
     @SuppressLint("HardwareIds")
     private fun readAndroidId(): String {
-        return Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
+        return try {
+            Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
+        } catch (_: Throwable) {
+            ""
+        }
     }
 }

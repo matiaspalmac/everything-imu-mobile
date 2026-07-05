@@ -17,11 +17,12 @@ data class OscMessage(val address: String, val args: List<Any>) {
     fun firstBool(): Boolean? = args.firstOrNull { it is Boolean } as? Boolean
     fun firstInt(): Int? = args.firstOrNull { it is Int } as? Int
 
-    /** Best-effort 0..1 intensity: float kept as-is, bool→1f/0f, int>0 → 1f. */
+    /** Best-effort intensity: float kept as-is, bool→1f/0f, int passed through
+     * as a float (the caller's gain/minThreshold clamp it, matching desktop). */
     fun intensity(): Float = when (val v = args.firstOrNull()) {
         is Float -> v.coerceIn(0f, 1f)
         is Boolean -> if (v) 1f else 0f
-        is Int -> if (v > 0) 1f else 0f
+        is Int -> v.toFloat()
         else -> 0f
     }
 }

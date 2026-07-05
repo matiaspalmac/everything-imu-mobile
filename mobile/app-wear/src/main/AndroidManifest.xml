@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:allowBackup="false"
         android:label="everything-imu"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">

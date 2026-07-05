@@ -20,7 +20,9 @@ object HostAddress {
             val p = parts[i]
             if (p.isEmpty() || p.length > 3) return null
             if (p.length > 1 && p[0] == '0') return null // reject "01", "007"
-            if (!p.all { it.isDigit() }) return null
+            // Strict ASCII only — Char.isDigit() also accepts Unicode Nd digits
+            // (Arabic-Indic/fullwidth), which would violate the IPv4 contract.
+            if (!p.all { it in '0'..'9' }) return null
             val n = p.toIntOrNull() ?: return null
             if (n !in 0..255) return null
             out[i] = n

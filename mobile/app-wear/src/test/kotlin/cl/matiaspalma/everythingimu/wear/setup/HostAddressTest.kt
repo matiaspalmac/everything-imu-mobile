@@ -3,6 +3,7 @@ package cl.matiaspalma.everythingimu.wear.setup
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class HostAddressTest {
@@ -30,6 +31,19 @@ class HostAddressTest {
         assertNull(HostAddress.parseOctets("192.168.1.x"))       // non-digit
         assertNull(HostAddress.parseOctets("slimevr.local"))     // hostname
         assertNull(HostAddress.parseOctets("192.168.1.1000"))    // >3 digits
+        assertNull(HostAddress.parseOctets("١٩٢.168.1.1")) // Arabic-Indic digits
+        assertNull(HostAddress.parseOctets("１９２.168.1.1")) // fullwidth digits
+        assertNull(HostAddress.parseOctets("192.16 8.1.1"))      // embedded whitespace
+    }
+
+    @Test
+    fun formatRejectsWrongSizedArray() {
+        assertThrows(IllegalArgumentException::class.java) {
+            HostAddress.format(intArrayOf(192, 168, 1))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            HostAddress.format(intArrayOf(192, 168, 1, 1, 1))
+        }
     }
 
     @Test

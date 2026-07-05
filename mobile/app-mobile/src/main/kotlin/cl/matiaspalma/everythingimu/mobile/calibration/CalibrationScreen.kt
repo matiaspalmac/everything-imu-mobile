@@ -115,7 +115,13 @@ fun CalibrationScreen(onClose: () -> Unit) {
                     modifier = Modifier.weight(1f),
                 ) { Text(if (progress.complete) t.action_apply else t.calibrate_keep_moving) }
                 OutlinedButton(
-                    onClick = { active = false },
+                    onClick = {
+                        // Tear the session down explicitly: onDispose sees
+                        // active=false and would otherwise skip the teardown,
+                        // leaking the mag sample-sink and its sensor listener.
+                        TrackingController.cancelMagCalibration()
+                        active = false
+                    },
                     modifier = Modifier.weight(1f),
                 ) { Text(t.action_cancel) }
             }

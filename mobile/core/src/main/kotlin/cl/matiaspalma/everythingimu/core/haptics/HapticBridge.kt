@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,6 +37,9 @@ class HapticBridge(context: Context) {
 
     private val appContext = context.applicationContext
     private val vibrator: Vibrator? = obtainVibrator(appContext)
+    /** Serializes motor access so interleaved vibrate()/cancel() calls from the
+     * OSC, watchdog, and desktop-rumble threads cannot stomp each other. */
+    private val vibratorLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var socket: DatagramSocket? = null
     private var recvJob: Job? = null
@@ -82,7 +86,7 @@ class HapticBridge(context: Context) {
         _enabled.value = true
         recvJob = scope.launch { receive() }
         watchdog = scope.launch { watchdog() }
-        _state.value = _state.value.copy(port = port)
+        _state.update { it.copy(port = port) }
     }
 
     @Synchronized
@@ -138,9 +142,11 @@ class HapticBridge(context: Context) {
             return
         }
         val now = System.nanoTime()
-        if ((now - lastVibrateNanos) / 1_000_000 < minIntervalMs && intensity == lastIntensity) return
-        lastVibrateNanos = now
+        // Latch the most recent intensity; the interval cap actually throttles
+        // even when the value changes every packet (VRChat proximity sweeps).
         lastIntensity = intensity
+        if ((now - lastVibrateNanos) / 1_000_000 < minIntervalMs) return
+        lastVibrateNanos = now
         triggerVibration(intensity)
     }
 
@@ -153,36 +159,38 @@ class HapticBridge(context: Context) {
         val amplitude = (boosted * 255f).toInt().coerceIn(1, 255)
         val durationMs = (60L + (boosted * 220f).toLong()).coerceAtLeast(40L)
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val effect = if (vib.hasAmplitudeControl()) {
-                    VibrationEffect.createOneShot(durationMs, amplitude)
-                } else {
-                    VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
-                }
-                // Attribute the buzz as media/game rumble. A bare vibrate()
-                // defaults to USAGE_TOUCH, which the system drops with
-                // IGNORED_FOR_SETTINGS whenever the user has touch haptic
-                // feedback disabled (MIUI ships it off).
-                if (Build.VERSION.SDK_INT >= 33) {
-                    vib.vibrate(
-                        effect,
-                        VibrationAttributes.createForUsage(VibrationAttributes.USAGE_MEDIA),
-                    )
+            synchronized(vibratorLock) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val effect = if (vib.hasAmplitudeControl()) {
+                        VibrationEffect.createOneShot(durationMs, amplitude)
+                    } else {
+                        VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
+                    }
+                    // Attribute the buzz as media/game rumble. A bare vibrate()
+                    // defaults to USAGE_TOUCH, which the system drops with
+                    // IGNORED_FOR_SETTINGS whenever the user has touch haptic
+                    // feedback disabled (MIUI ships it off).
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        vib.vibrate(
+                            effect,
+                            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_MEDIA),
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        vib.vibrate(
+                            effect,
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_GAME)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build(),
+                        )
+                    }
                 } else {
                     @Suppress("DEPRECATION")
-                    vib.vibrate(
-                        effect,
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_GAME)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build(),
-                    )
+                    vib.vibrate(durationMs)
                 }
-            } else {
-                @Suppress("DEPRECATION")
-                vib.vibrate(durationMs)
             }
-            _state.value = _state.value.copy(activeIntensity = boosted, lastEventNanos = System.nanoTime())
+            _state.update { it.copy(activeIntensity = boosted, lastEventNanos = System.nanoTime()) }
         } catch (t: Throwable) {
             Log.w("HapticBridge", "vibrate failed", t)
         }
@@ -191,11 +199,13 @@ class HapticBridge(context: Context) {
     @SuppressLint("MissingPermission")
     private fun cancelVibration() {
         try {
-            vibrator?.cancel()
+            synchronized(vibratorLock) {
+                vibrator?.cancel()
+            }
         } catch (_: Throwable) {
             // best-effort
         }
-        _state.value = _state.value.copy(activeIntensity = 0f)
+        _state.update { it.copy(activeIntensity = 0f) }
     }
 
     private suspend fun watchdog() {
@@ -245,7 +255,7 @@ class HapticBridge(context: Context) {
         // haptics screen shows the pulses are arriving even if the motor is
         // silenced by OEM settings.
         appendLog("(eimu) desktop rumble", clamped)
-        _state.value = _state.value.copy(eimuPulses = _state.value.eimuPulses + 1)
+        _state.update { it.copy(eimuPulses = it.eimuPulses + 1) }
         if (clamped <= 0f) cancelVibration() else triggerVibration(clamped)
     }
 

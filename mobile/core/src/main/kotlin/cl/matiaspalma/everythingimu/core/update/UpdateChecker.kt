@@ -28,6 +28,10 @@ object UpdateChecker {
     private const val LATEST_RELEASE_URL =
         "https://api.github.com/repos/matiaspalmac/everything-imu/releases/latest"
 
+    /** Fallback when the response-supplied `html_url` fails validation. */
+    private const val RELEASES_PAGE_URL =
+        "https://github.com/matiaspalmac/everything-imu/releases/latest"
+
     /**
      * Fetches `releases/latest` and returns a populated [UpdateInfo]. Returns
      * `null` only on transport failure — when the request succeeds but no
@@ -52,7 +56,7 @@ object UpdateChecker {
                 UpdateInfo(
                     currentVersion = currentVersion,
                     latestVersion = tag,
-                    releaseUrl = htmlUrl,
+                    releaseUrl = safeReleaseUrl(htmlUrl),
                     updateAvailable = isNewer(tag, currentVersion),
                 )
             } finally {
@@ -62,22 +66,51 @@ object UpdateChecker {
     }
 
     /**
-     * SemVer-ish comparison that strips non-digit separators and compares the
-     * remaining integer components lexicographically. Falls back to "longer is
-     * newer" when prefixes match (e.g. `1.0.1` > `1.0`). Matches the desktop
-     * `semver_newer` helper so phone, watch, and Tauri agree on ordering.
+     * SemVer-ish comparison. Strips any pre-release/build suffix
+     * (`-beta.6`, `+build`) before tokenizing the release core, compares the
+     * integer components, and — when the cores are equal — treats a
+     * pre-release as older than the corresponding release (so a running
+     * `1.0.0-beta.6` still sees stable `1.0.0` as an update).
      */
     private fun isNewer(candidate: String, current: String): Boolean {
-        val a = parseComponents(candidate)
-        val b = parseComponents(current)
-        val min = minOf(a.size, b.size)
-        for (i in 0 until min) {
-            if (a[i] > b[i]) return true
-            if (a[i] < b[i]) return false
+        val a = parseVersion(candidate)
+        val b = parseVersion(current)
+        val max = maxOf(a.core.size, b.core.size)
+        for (i in 0 until max) {
+            val ai = a.core.getOrElse(i) { 0 }
+            val bi = b.core.getOrElse(i) { 0 }
+            if (ai > bi) return true
+            if (ai < bi) return false
         }
-        return a.size > b.size
+        // Cores equal: a release supersedes a pre-release of the same core.
+        return b.preRelease && !a.preRelease
     }
 
-    private fun parseComponents(s: String): List<Int> =
-        s.split(Regex("[^0-9]+")).mapNotNull { it.toIntOrNull() }
+    private data class Version(val core: List<Int>, val preRelease: Boolean)
+
+    private fun parseVersion(s: String): Version {
+        val trimmed = s.trim()
+        // SemVer pre-release ('-') and build ('+') metadata begin the suffix.
+        val core = trimmed.substringBefore('-').substringBefore('+')
+        val preRelease = core.length < trimmed.length
+        val parts = core.split(Regex("[^0-9]+")).mapNotNull { it.toIntOrNull() }
+        return Version(parts, preRelease)
+    }
+
+    /** Only launch response-supplied URLs that are https on a GitHub host. */
+    private fun safeReleaseUrl(url: String): String {
+        return try {
+            val parsed = URL(url)
+            val host = parsed.host.orEmpty().lowercase()
+            if (parsed.protocol.equals("https", ignoreCase = true) &&
+                (host == "github.com" || host.endsWith(".github.com"))
+            ) {
+                url
+            } else {
+                RELEASES_PAGE_URL
+            }
+        } catch (_: Throwable) {
+            RELEASES_PAGE_URL
+        }
+    }
 }
