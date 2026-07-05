@@ -74,6 +74,12 @@ mod android_bindings {
         if handle == 0 {
             return;
         }
+        // Reject a non-finite raw sample at the boundary: a single NaN would
+        // otherwise propagate through quat_normalize into gyr_quat and freeze
+        // the fusion state permanently.
+        if ![gx, gy, gz, ax, ay, az].iter().all(|v| v.is_finite()) {
+            return;
+        }
         let vqf = unsafe { vqf_mut(handle) };
         vqf.update(
             [gx as f64, gy as f64, gz as f64],
@@ -100,11 +106,22 @@ mod android_bindings {
         if handle == 0 {
             return;
         }
+        // Reject a non-finite raw sample at the boundary (see nativeUpdateImu).
+        // A non-finite mag component is dropped to a plain 6-DOF update rather
+        // than poisoning the mag path.
+        if ![gx, gy, gz, ax, ay, az].iter().all(|v| v.is_finite()) {
+            return;
+        }
+        let mag = if [mx, my, mz].iter().all(|v| v.is_finite()) {
+            Some([mx as f64, my as f64, mz as f64])
+        } else {
+            None
+        };
         let vqf = unsafe { vqf_mut(handle) };
         vqf.update(
             [gx as f64, gy as f64, gz as f64],
             [ax as f64, ay as f64, az as f64],
-            Some([mx as f64, my as f64, mz as f64]),
+            mag,
         );
     }
 
