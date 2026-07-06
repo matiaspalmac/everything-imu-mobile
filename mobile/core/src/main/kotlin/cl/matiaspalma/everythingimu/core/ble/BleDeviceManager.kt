@@ -7,6 +7,8 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import cl.matiaspalma.everythingimu.core.net.EimuClient
 import cl.matiaspalma.everythingimu.core.net.EimuProtocol
@@ -57,6 +59,16 @@ class BleDeviceManager(
     private val handles = ConcurrentHashMap<String, Int>()
     private val nextHandle = AtomicInteger(1)
 
+    // Bounded auto-reconnect state. `onDisconnected` fires only on an involuntary
+    // drop (a user disconnect()/shutdown() closes the device, which suppresses
+    // the callback); the intentional marker is a defensive double-check that also
+    // cancels a reconnect already scheduled when the user then disconnects.
+    // Used as a set: presence of the key marks an address as user-disconnected.
+    private val intentionalDisconnect = ConcurrentHashMap<String, Boolean>()
+    private val reconnectAttempts = ConcurrentHashMap<String, Int>()
+    private val reconnectTokens = ConcurrentHashMap<String, Runnable>()
+    private val reconnectHandler = Handler(Looper.getMainLooper())
+
     private val scanner
         get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)
             ?.adapter?.bluetoothLeScanner
@@ -101,8 +113,20 @@ class BleDeviceManager(
     }
 
     fun connect(address: String) {
+        // A fresh user-initiated connect clears any intentional-disconnect marker
+        // and cancels/resets pending auto-reconnect for this address.
+        intentionalDisconnect.remove(address)
+        cancelPendingReconnect(address)
+        reconnectAttempts.remove(address)
         val entry = _entries.value.firstOrNull { it.address == address } ?: return
         if (jc2Devices.containsKey(address) || hopxDevices.containsKey(address)) return
+        startConnection(entry)
+    }
+
+    /** Build a FRESH device object (fresh BluetoothGatt / client_if) and connect.
+     *  Never reuses a gatt already closed by [Jc2Device.releaseGatt]. */
+    private fun startConnection(entry: Entry) {
+        val address = entry.address
         update(address) { it.copy(state = Entry.State.Connecting) }
         try {
             val bt = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
@@ -130,11 +154,17 @@ class BleDeviceManager(
             Log.w(TAG, "connect failed (missing BLUETOOTH_CONNECT?)", e)
             jc2Devices.remove(address)?.close()
             hopxDevices.remove(address)?.close()
+            reconnectAttempts.remove(address)
             update(address) { it.copy(state = Entry.State.Found, handle = -1) }
         }
     }
 
     fun disconnect(address: String) {
+        // User-initiated: mark intentional and cancel any pending reconnect so the
+        // involuntary-drop path cannot resurrect the link.
+        intentionalDisconnect[address] = true
+        cancelPendingReconnect(address)
+        reconnectAttempts.remove(address)
         jc2Devices.remove(address)?.close()
         hopxDevices.remove(address)?.close()
         dropHandle(address)
@@ -149,17 +179,83 @@ class BleDeviceManager(
 
     fun shutdown() {
         stopScan()
+        // Cancel every pending auto-reconnect before tearing devices down so a
+        // scheduled runnable cannot start a fresh connect after shutdown.
+        reconnectHandler.removeCallbacksAndMessages(null)
+        reconnectTokens.clear()
+        reconnectAttempts.clear()
         for ((address, dev) in jc2Devices) {
+            intentionalDisconnect[address] = true
             dev.close()
             dropHandle(address)
         }
         for ((address, dev) in hopxDevices) {
+            intentionalDisconnect[address] = true
             dev.close()
             dropHandle(address)
         }
         jc2Devices.clear()
         hopxDevices.clear()
         _entries.value = emptyList()
+    }
+
+    // --- Bounded auto-reconnect ------------------------------------------------
+
+    /** Involuntary-drop entry point shared by both listeners' `onDisconnected`.
+     *  The dropped device has already been removed from its map by the caller. */
+    private fun onInvoluntaryDrop(address: String) {
+        if (intentionalDisconnect.remove(address) != null) {
+            // User disconnect / shutdown raced the callback — surface, no reconnect.
+            surfaceDisconnected(address)
+            return
+        }
+        val attempts = reconnectAttempts[address] ?: 0
+        if (!ReconnectPolicy.shouldReconnect(
+                intentional = false,
+                attempts = attempts,
+                maxAttempts = MAX_RECONNECT_ATTEMPTS,
+            )
+        ) {
+            // Budget exhausted — give up and surface disconnected.
+            surfaceDisconnected(address)
+            return
+        }
+        reconnectAttempts[address] = attempts + 1
+        // Keep the desktop handle + announce alive across the blip; show the row
+        // as reconnecting rather than dropping it.
+        if (_entries.value.any { it.address == address }) {
+            update(address) { it.copy(state = Entry.State.Connecting) }
+        }
+        scheduleReconnect(address, ReconnectPolicy.backoffMillis(attempts))
+    }
+
+    /** Give up: clear reconnect state, drop the desktop handle, revert the row. */
+    private fun surfaceDisconnected(address: String) {
+        reconnectAttempts.remove(address)
+        dropHandle(address)
+        update(address) { it.copy(state = Entry.State.Found, handle = -1) }
+    }
+
+    private fun scheduleReconnect(address: String, delayMs: Long) {
+        cancelPendingReconnect(address)
+        val token = Runnable {
+            reconnectTokens.remove(address)
+            attemptReconnect(address)
+        }
+        reconnectTokens[address] = token
+        reconnectHandler.postDelayed(token, delayMs)
+    }
+
+    private fun cancelPendingReconnect(address: String) {
+        reconnectTokens.remove(address)?.let { reconnectHandler.removeCallbacks(it) }
+    }
+
+    private fun attemptReconnect(address: String) {
+        // Re-check: the user may have disconnected during the backoff window.
+        if (intentionalDisconnect.containsKey(address)) return
+        if (jc2Devices.containsKey(address) || hopxDevices.containsKey(address)) return
+        val entry = _entries.value.firstOrNull { it.address == address } ?: return
+        startConnection(entry)
     }
 
     private fun dropHandle(address: String) {
@@ -197,6 +293,9 @@ class BleDeviceManager(
 
     private val jc2Listener = object : Jc2Device.Listener {
         override fun onReady(device: Jc2Device) {
+            // A live link clears the reconnect budget so a later independent blip
+            // starts its attempt count from zero.
+            reconnectAttempts.remove(device.address)
             // putIfAbsent (not computeIfAbsent, which is API 24+) keeps this
             // atomic on the minSdk-21 floor.
             val handle = handles[device.address] ?: run {
@@ -212,8 +311,10 @@ class BleDeviceManager(
                 EimuClient.AnnouncedDevice(
                     handle = handle,
                     kind = kindWire,
+                    // Joy-Con 2 / Pro Controller 2 carry a magnetometer; announce
+                    // 9DOF so the desktop rebuilds mag-fused (drift-free) heading.
                     mac = macFromAddress(device.address),
-                    hasMag = false,
+                    hasMag = true,
                     hasBattery = true,
                     hasRumble = true,
                     rateHz = 60,
@@ -225,7 +326,7 @@ class BleDeviceManager(
 
         override fun onSample(device: Jc2Device, report: Jc2Report, timestampUs: Long) {
             val handle = handles[device.address] ?: return
-            eimuClient()?.sendImu(handle, timestampUs, report.gyro, report.accel, null)
+            eimuClient()?.sendImu(handle, timestampUs, report.gyro, report.accel, report.mag)
         }
 
         override fun onReset(device: Jc2Device, reset: Jc2ResetDetector.Reset) {
@@ -241,14 +342,18 @@ class BleDeviceManager(
         }
 
         override fun onDisconnected(device: Jc2Device) {
+            // Involuntary drop only (voluntary close() suppresses this callback):
+            // remove the closed device then run the bounded-reconnect decision.
             jc2Devices.remove(device.address)
-            dropHandle(device.address)
-            update(device.address) { it.copy(state = Entry.State.Found, handle = -1) }
+            onInvoluntaryDrop(device.address)
         }
     }
 
     private val hopxListener = object : HopxDevice.Listener {
         override fun onReady(device: HopxDevice) {
+            // A live link clears the reconnect budget so a later independent blip
+            // starts its attempt count from zero.
+            reconnectAttempts.remove(device.address)
             // putIfAbsent (not computeIfAbsent, which is API 24+) keeps this
             // atomic on the minSdk-21 floor.
             val handle = handles[device.address] ?: run {
@@ -276,9 +381,10 @@ class BleDeviceManager(
         }
 
         override fun onDisconnected(device: HopxDevice) {
+            // Involuntary drop only (voluntary close() suppresses this callback):
+            // remove the closed device then run the bounded-reconnect decision.
             hopxDevices.remove(device.address)
-            dropHandle(device.address)
-            update(device.address) { it.copy(state = Entry.State.Found, handle = -1) }
+            onInvoluntaryDrop(device.address)
         }
     }
 
@@ -297,5 +403,22 @@ class BleDeviceManager(
 
     companion object {
         private const val TAG = "BleDeviceManager"
+        private const val MAX_RECONNECT_ATTEMPTS = 5
     }
+}
+
+/**
+ * Pure decision logic for [BleDeviceManager]'s bounded auto-reconnect. Kept
+ * side-effect-free so it can be unit-tested without a live GATT stack.
+ */
+object ReconnectPolicy {
+    /** Reconnect only for an involuntary drop that still has budget left. */
+    fun shouldReconnect(intentional: Boolean, attempts: Int, maxAttempts: Int): Boolean =
+        !intentional && attempts < maxAttempts
+
+    /**
+     * Exponential backoff for a 0-based attempt index: 1s, 2s, 4s, 8s, 16s,
+     * capped at 16s so an out-of-range index cannot overflow the shift.
+     */
+    fun backoffMillis(attempt: Int): Long = 1000L shl attempt.coerceIn(0, 4)
 }

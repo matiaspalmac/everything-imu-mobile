@@ -2,6 +2,7 @@ package cl.matiaspalma.everythingimu.core.ble
 
 import android.util.Log
 import java.util.UUID
+import kotlin.math.sqrt
 
 enum class Jc2Kind { Left, Right, Pro }
 
@@ -10,6 +11,8 @@ data class Jc2Report(
     val gyro: FloatArray,
     /** m/s², same remap. */
     val accel: FloatArray,
+    /** µT, same remap; null when no in-range magnetometer reading this frame. */
+    val mag: FloatArray?,
     val batteryFraction: Float,
     val charging: Boolean,
     val homePressed: Boolean,
@@ -20,9 +23,10 @@ data class Jc2Report(
  * Joy-Con 2 / Pro Controller 2 BLE protocol facts. Mirrors
  * `crates/device-joycon/src/jc2.rs` in the desktop repo.
  *
- * SAFETY: sub-command 0x15 soft-bricks pairing. Only builders for the
- * known-safe sub-commands 0x01 / 0x02 / 0x04 exist here — never add a raw
- * write helper that takes an arbitrary sub-command byte.
+ * SAFETY: sub-command 0x15 soft-bricks pairing. The raw sub-command builder is
+ * private; the public API exposes only fixed, known-safe builders (sub-commands
+ * 0x01 / 0x02 / 0x04) — never expose a builder that takes an arbitrary
+ * sub-command byte.
  */
 object Jc2Protocol {
     private const val TAG = "Jc2Protocol"
@@ -37,6 +41,9 @@ object Jc2Protocol {
 
     private const val ACCEL_M_S2_PER_LSB = 9.80665f / 4096.0f
     private const val GYRO_RAD_S_PER_LSB = 34.8f / 32767.0f
+    private const val MAG_UT_PER_LSB = 4900.0f / 32767.0f
+    private const val MAG_MIN_MAGNITUDE_UT = 10.0f
+    private const val MAG_MAX_MAGNITUDE_UT = 120.0f
     private const val BATTERY_MV_MIN = 3000.0f
     private const val BATTERY_MV_MAX = 4200.0f
 
@@ -77,9 +84,18 @@ object Jc2Protocol {
         return kind
     }
 
-    fun buildFeatureSelectCmd(subcmd: Byte, mask: Byte): ByteArray = byteArrayOf(
+    // Raw sub-command builder. PRIVATE by design: sub-command 0x15 at this wire
+    // byte soft-bricks pairing, so callers may only reach the fixed, known-safe
+    // sub-commands through the zero-arg builders below.
+    private fun featureSelectCmd(subcmd: Byte, mask: Byte): ByteArray = byteArrayOf(
         0x0C, 0x91.toByte(), 0x01, subcmd, 0x00, 0x04, 0x00, 0x00, mask, 0x00, 0x00, 0x00,
     )
+
+    /** Select the IMU feature set (sub-command 0x02, all feature bits). */
+    fun buildSelectImuFeaturesCmd(): ByteArray = featureSelectCmd(0x02, 0xFF.toByte())
+
+    /** Enable IMU streaming (sub-command 0x04, all feature bits). */
+    fun buildEnableImuStreamingCmd(): ByteArray = featureSelectCmd(0x04, 0xFF.toByte())
 
     fun buildRumblePresetCmd(preset: Byte): ByteArray = byteArrayOf(
         0x0A, 0x91.toByte(), 0x01, 0x02, 0x00, 0x04, 0x00, 0x00, preset, 0x00, 0x00, 0x00,
@@ -90,7 +106,12 @@ object Jc2Protocol {
         (mask.toInt() and 0x0F).toByte(), 0x00, 0x00, 0x00,
     )
 
-    fun parseInputReport0x05(kind: Jc2Kind, buf: ByteArray, length: Int): Jc2Report? {
+    fun parseInputReport0x05(
+        kind: Jc2Kind,
+        buf: ByteArray,
+        length: Int,
+        magBiasUt: FloatArray? = null,
+    ): Jc2Report? {
         if (length < REPORT_0X05_LEN) return null
         fun i16(off: Int): Int =
             ((buf[off + 1].toInt() shl 8) or (buf[off].toInt() and 0xFF)).toShort().toInt()
@@ -113,13 +134,38 @@ object Jc2Protocol {
                 i16(0x3A) * GYRO_RAD_S_PER_LSB,
             ),
         )
+        // Magnetometer (9DOF): raw i16 samples scaled and remapped with the same
+        // orientation transform as gyro/accel, optional hard-iron bias removed,
+        // then gated on magnitude so an out-of-range or absent field is dropped.
+        // The hard-iron flash-bias read is a hardware-pending follow-up; raw mag
+        // (magBiasUt = null) is forwarded, and the user's recenter zeroes the
+        // heading — this still removes the free yaw drift of 6DOF-only fusion.
+        val mag = remapAxes(
+            kind,
+            floatArrayOf(
+                i16(0x19) * MAG_UT_PER_LSB,
+                i16(0x1B) * MAG_UT_PER_LSB,
+                i16(0x1D) * MAG_UT_PER_LSB,
+            ),
+        )
+        if (magBiasUt != null) {
+            mag[0] -= magBiasUt[0]
+            mag[1] -= magBiasUt[1]
+            mag[2] -= magBiasUt[2]
+        }
+        val magNorm = sqrt(mag[0] * mag[0] + mag[1] * mag[1] + mag[2] * mag[2])
+        val magOut = if (magNorm >= MAG_MIN_MAGNITUDE_UT && magNorm < MAG_MAX_MAGNITUDE_UT) {
+            mag
+        } else {
+            null
+        }
         val batteryMv = u16(0x1F).toFloat()
         val fraction = ((batteryMv - BATTERY_MV_MIN) / (BATTERY_MV_MAX - BATTERY_MV_MIN))
             .coerceIn(0f, 1f)
         val charging = (buf[0x21].toInt() and 0xFF) >= 0x30
         val home = (buf[0x05].toInt() and 0x10) != 0
         val capture = (buf[0x05].toInt() and 0x20) != 0
-        return Jc2Report(gyro, accel, fraction, charging, home, capture)
+        return Jc2Report(gyro, accel, magOut, fraction, charging, home, capture)
     }
 
     /** SDL base remap (x, z, -y) + standalone Joy-Con ±90° about Y. */

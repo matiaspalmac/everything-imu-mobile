@@ -165,13 +165,13 @@ class Jc2Device(
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             // CCCD armed → IMU enable sequence: select features then enable.
-            write(Jc2Protocol.buildFeatureSelectCmd(0x02, 0xFF.toByte()))
+            write(Jc2Protocol.buildSelectImuFeaturesCmd())
             mainHandler.postDelayed({
                 // Bail if the link was torn down during the 500 ms window: a
                 // mid-handshake drop sets closed + nulls gatt, so onReady must
                 // not mint a handle for a dead connection.
                 if (closed || gatt == null) return@postDelayed
-                write(Jc2Protocol.buildFeatureSelectCmd(0x04, 0xFF.toByte()))
+                write(Jc2Protocol.buildEnableImuStreamingCmd())
                 listener.onReady(this@Jc2Device)
             }, 500)
         }

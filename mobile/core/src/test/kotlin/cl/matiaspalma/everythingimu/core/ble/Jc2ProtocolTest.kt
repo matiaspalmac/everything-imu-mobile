@@ -40,9 +40,16 @@ class Jc2ProtocolTest {
 
     @Test
     fun commandLayouts() {
+        // The raw feature-select builder is now private; the two fixed public
+        // builders must emit the exact wire bytes of the old (0x02,0xFF) and
+        // (0x04,0xFF) calls — this is a pure API-surface change, no wire change.
         assertArrayEquals(
-            byteArrayOf(0x0C, 0x91.toByte(), 0x01, 0x02, 0x00, 0x04, 0x00, 0x00, 0x84.toByte(), 0x00, 0x00, 0x00),
-            Jc2Protocol.buildFeatureSelectCmd(0x02, 0x84.toByte()),
+            byteArrayOf(0x0C, 0x91.toByte(), 0x01, 0x02, 0x00, 0x04, 0x00, 0x00, 0xFF.toByte(), 0x00, 0x00, 0x00),
+            Jc2Protocol.buildSelectImuFeaturesCmd(),
+        )
+        assertArrayEquals(
+            byteArrayOf(0x0C, 0x91.toByte(), 0x01, 0x04, 0x00, 0x04, 0x00, 0x00, 0xFF.toByte(), 0x00, 0x00, 0x00),
+            Jc2Protocol.buildEnableImuStreamingCmd(),
         )
         assertArrayEquals(
             byteArrayOf(0x0A, 0x91.toByte(), 0x01, 0x02, 0x00, 0x04, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00),
@@ -77,6 +84,40 @@ class Jc2ProtocolTest {
     @Test
     fun rejectsShortReport() {
         assertNull(Jc2Protocol.parseInputReport0x05(Jc2Kind.Left, ByteArray(0x3B), 0x3B))
+    }
+
+    @Test
+    fun parsesMagWhenInRange() {
+        // Pro remap keeps the raw X sample on mag[0]; ~400 LSB * (4900/32767) is
+        // ~59.8 µT, inside the [10, 120) µT gate.
+        val buf = ByteArray(0x3C)
+        put16(buf, 0x19, 400)
+        val p = Jc2Protocol.parseInputReport0x05(Jc2Kind.Pro, buf, buf.size)!!
+        val mag = p.mag!!
+        assertTrue(mag.all { it.isFinite() })
+        val norm = sqrt(mag[0] * mag[0] + mag[1] * mag[1] + mag[2] * mag[2])
+        assertTrue(norm > 10f && norm < 120f)
+    }
+
+    @Test
+    fun dropsMagOutOfRange() {
+        // ~1000 LSB is ~149.5 µT, above the 120 µT ceiling → dropped (null).
+        val buf = ByteArray(0x3C)
+        put16(buf, 0x19, 1000)
+        val p = Jc2Protocol.parseInputReport0x05(Jc2Kind.Pro, buf, buf.size)!!
+        assertNull(p.mag)
+    }
+
+    @Test
+    fun magBiasSubtractedBeforeMagnitudeGate() {
+        val buf = ByteArray(0x3C)
+        put16(buf, 0x19, 400) // ~59.8 µT, in range with no bias
+        assertTrue(Jc2Protocol.parseInputReport0x05(Jc2Kind.Pro, buf, buf.size)!!.mag != null)
+        // A hard-iron bias cancelling most of the field drops it below the floor.
+        val biased = Jc2Protocol.parseInputReport0x05(
+            Jc2Kind.Pro, buf, buf.size, floatArrayOf(55f, 0f, 0f),
+        )!!
+        assertNull(biased.mag)
     }
 
     @Test
