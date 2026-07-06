@@ -12,7 +12,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="IMU sensor streaming for VR tracking over LAN" />
+                android:value="Continuously streams on-device motion-sensor data and hosts BLE controller connections, forwarding orientation to a paired computer over the local network for full-body motion tracking while the app runs in the background." />
         </service>
     </application>
 
