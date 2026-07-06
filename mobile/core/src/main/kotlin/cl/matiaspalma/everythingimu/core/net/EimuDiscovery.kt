@@ -25,9 +25,13 @@ object EimuDiscovery {
         hubName: String,
         port: Int = EimuProtocol.DEFAULT_PORT,
         timeoutMs: Long = 3_000,
+        bindSocket: ((DatagramSocket) -> Unit)? = null,
     ): String? = withContext(Dispatchers.IO) {
         try {
             DatagramSocket().use { sock ->
+                // Bind to Wi-Fi (best effort) so the broadcast leaves the Wi-Fi
+                // NIC, not a Bluetooth companion proxy that can't reach the LAN.
+                bindSocket?.invoke(sock)
                 sock.broadcast = true
                 sock.soTimeout = RECV_TIMEOUT_MS
                 val hello = EimuProtocol.hello(uuid, hubName)

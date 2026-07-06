@@ -213,6 +213,10 @@ object TrackingController {
                 if (handle == PHONE_HANDLE) hapticBridge?.pulse(intensity)
                 else onControllerRumble?.invoke(handle, intensity)
             }
+            // Bind the client's UDP socket to Wi-Fi per-socket (not the whole
+            // process) so the stream leaves the Wi-Fi NIC while incidental
+            // traffic (update check) keeps the default route.
+            e.onSocketCreated = { s -> wifiBinder?.bindSocket(s) }
             eimuClient = e
             eimuReady.complete(e)
             mirror(e.state, e.stats, e.lastError)
@@ -429,7 +433,15 @@ object TrackingController {
         val uuid = prefs?.deviceUuidOrCreate().orEmpty().ifBlank { DEFAULT_UUID }
         val name = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
             .trim().ifBlank { "Android" }
-        return EimuDiscovery.discover(EimuClient.uuidBytes(uuid), name)
+        // Ensure the Wi-Fi network is requested even when discovery runs before
+        // a tracking session starts, and bind the probe socket to it so the
+        // broadcast leaves Wi-Fi (Wear's default proxy can't reach the LAN).
+        wifiBinder?.bindToWifi()
+        return EimuDiscovery.discover(
+            EimuClient.uuidBytes(uuid),
+            name,
+            bindSocket = { s -> wifiBinder?.bindSocket(s) },
+        )
     }
 
     fun disconnect() {
@@ -707,11 +719,24 @@ object TrackingController {
         // the client live kept the HELLO/announce loops running so the desktop
         // still saw a phantom live tracker after a stop.
         disconnect()
+        // Stop everything the user perceives as tracking: BLE controllers keep a
+        // live link (and battery drain) after a stop otherwise. This is a
+        // user-intended disconnect, so it must not trigger auto-reconnect.
+        stopBleControllers()
         sensors?.stop()
         wifiBinder?.release()
         _running.value = false
         mountOffset = Quaternion.IDENTITY
         _mountedQuaternion.value = Quaternion.IDENTITY
+    }
+
+    /** Disconnect every connected BLE controller (intentional — no reconnect). */
+    private fun stopBleControllers() {
+        bleManager?.let { mgr ->
+            for (entry in mgr.entries.value) {
+                if (entry.handle >= 0) mgr.disconnect(entry.address)
+            }
+        }
     }
 
     /**

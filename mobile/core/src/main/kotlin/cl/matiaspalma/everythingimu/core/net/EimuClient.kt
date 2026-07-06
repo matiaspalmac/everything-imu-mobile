@@ -84,6 +84,13 @@ class EimuClient(
     /** Desktop-initiated rumble for one of our handles (phone vibrator / BLE controller). */
     @Volatile var onRumble: ((handle: Int, intensity: Float) -> Unit)? = null
 
+    /**
+     * Invoked with each freshly-created UDP socket before any traffic. Used to
+     * bind the socket to the Wi-Fi network (see WifiBinder) so the eimu stream
+     * leaves the right NIC without forcing the whole process onto Wi-Fi.
+     */
+    @Volatile var onSocketCreated: ((DatagramSocket) -> Unit)? = null
+
     @Volatile private var sentCount: Long = 0
     @Volatile private var recvCount: Long = 0
     @Volatile private var lastRttMs: Long = -1
@@ -98,8 +105,13 @@ class EimuClient(
             // surface as a Failed state rather than crash the caller coroutine.
             val target = InetSocketAddress(host, port)
             endpoint = target
-            socket = DatagramSocket().apply { soTimeout = 250 }
-            Log.i(tag, "eimu socket bound localPort=${socket?.localPort} -> $host:$port")
+            val sock = DatagramSocket().apply { soTimeout = 250 }
+            // Bind to Wi-Fi (best effort) before any send/receive so datagrams
+            // leave the Wi-Fi NIC even when a Bluetooth companion proxy is the
+            // process default (Wear OS).
+            onSocketCreated?.invoke(sock)
+            socket = sock
+            Log.i(tag, "eimu socket bound localPort=${sock.localPort} -> $host:$port")
             lastAckNanos = 0L
             _lastError.value = null
             recvJob = scope.launch { recvLoop() }
