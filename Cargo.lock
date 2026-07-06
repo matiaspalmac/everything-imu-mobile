@@ -333,6 +333,7 @@ name = "jni-android"
 version = "1.0.0"
 dependencies = [
  "imu-fusion",
+ "imu-math",
  "jni",
 ]
 

@@ -1,14 +1,48 @@
-//! JNI bindings exposing the `imu-fusion` workspace crate to the Android `mobile/core` module.
+//! JNI bindings exposing the `imu-fusion` and `imu-math` workspace crates to
+//! the Android `mobile/core` module.
 //!
-//! Exported class:
+//! Exported classes:
 //!   cl.matiaspalma.everythingimu.core.fusion.VqfNative
+//!   cl.matiaspalma.everythingimu.core.calibration.MagCalNative
 
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
 use imu_fusion::Vqf;
+use imu_math::mag_cal_wizard::{MagCalWizard, WizardState};
 
 pub fn fusion_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Fit a batch of flattened XYZ magnetometer samples (µT) with the canonical
+/// sphere-fit wizard, shaping the accepted result into a fixed 6-float layout
+/// `[offsetX, offsetY, offsetZ, scaleX, scaleY, scaleZ]`.
+///
+/// The wizard models hard-iron offset only (an algebraic sphere fit), so scale
+/// is always unity — the mobile calibration format carries a per-axis scale for
+/// the bounding-box path, and unit scale keeps a wizard fit compatible with it
+/// without a persistence migration.
+///
+/// Returns `None` when the input is empty or not a whole number of XYZ triples,
+/// or when the wizard's gates (minimum sample count, direction coverage, RMS
+/// residual) reject the sample cloud. Factored out of the JNI entry point so the
+/// batch-to-`[6]` shaping is unit-testable on the host without a JVM.
+fn fit_mag_batch(flat: &[f32]) -> Option<[f32; 6]> {
+    if flat.is_empty() || flat.len() % 3 != 0 {
+        return None;
+    }
+    let mut wizard = MagCalWizard::new();
+    wizard.start();
+    for triple in flat.chunks_exact(3) {
+        wizard.ingest([triple[0], triple[1], triple[2]]);
+    }
+    match wizard.finalize() {
+        WizardState::Ready { calibration } => {
+            let o = calibration.offset;
+            Some([o[0], o[1], o[2], 1.0, 1.0, 1.0])
+        }
+        _ => None,
+    }
 }
 
 /// Allocate a VQF instance on the heap and return a raw handle.
@@ -38,7 +72,7 @@ fn vqf_free(handle: i64) {
 mod android_bindings {
     use super::*;
     use jni::objects::{JClass, JFloatArray};
-    use jni::sys::{jdouble, jfloat, jlong};
+    use jni::sys::{jdouble, jfloat, jfloatArray, jlong};
     use jni::JNIEnv;
 
     #[no_mangle]
@@ -176,6 +210,42 @@ mod android_bindings {
         };
         [q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32]
     }
+
+    /// Fit a batch of flattened XYZ magnetometer samples (length a multiple of
+    /// 3, µT) with the canonical sphere-fit wizard.
+    ///
+    /// Returns a Java `float[6]` = `[offX, offY, offZ, scaleX, scaleY, scaleZ]`
+    /// on a wizard-accepted fit, or Java `null` when the array is missing,
+    /// malformed, or the wizard's gates reject the sample cloud. A null return
+    /// is the caller's signal to fall back to the on-device bounding-box fit.
+    #[no_mangle]
+    pub extern "system" fn Java_cl_matiaspalma_everythingimu_core_calibration_MagCalNative_nativeFit<
+        'l,
+    >(
+        env: JNIEnv<'l>,
+        _class: JClass<'l>,
+        samples: JFloatArray<'l>,
+    ) -> jfloatArray {
+        let len = match env.get_array_length(&samples) {
+            Ok(n) if n > 0 => n as usize,
+            _ => return std::ptr::null_mut(),
+        };
+        let mut buf = vec![0f32; len];
+        if env.get_float_array_region(&samples, 0, &mut buf).is_err() {
+            return std::ptr::null_mut();
+        }
+        let Some(result) = fit_mag_batch(&buf) else {
+            return std::ptr::null_mut();
+        };
+        let out = match env.new_float_array(6) {
+            Ok(arr) => arr,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        if env.set_float_array_region(&out, 0, &result).is_err() {
+            return std::ptr::null_mut();
+        }
+        out.into_raw()
+    }
 }
 
 #[cfg(test)]
@@ -198,5 +268,61 @@ mod tests {
             assert!(q[0].is_finite());
         }
         vqf_free(h);
+    }
+
+    /// Flatten a well-spread sphere of `steps × steps` samples centred at `c`
+    /// into the `[x0, y0, z0, x1, ...]` layout the JNI entry point receives.
+    fn flat_sphere(c: [f32; 3], r: f32, steps: usize) -> Vec<f32> {
+        let mut out = Vec::new();
+        for i in 0..steps {
+            let theta = std::f32::consts::PI * (i as f32 + 0.5) / steps as f32;
+            for j in 0..steps {
+                let phi = 2.0 * std::f32::consts::PI * j as f32 / steps as f32;
+                out.push(c[0] + r * theta.sin() * phi.cos());
+                out.push(c[1] + r * theta.sin() * phi.sin());
+                out.push(c[2] + r * theta.cos());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn fit_mag_batch_rejects_malformed_input() {
+        assert!(fit_mag_batch(&[]).is_none());
+        // Not a whole number of XYZ triples.
+        assert!(fit_mag_batch(&[1.0, 2.0]).is_none());
+        assert!(fit_mag_batch(&[1.0, 2.0, 3.0, 4.0]).is_none());
+    }
+
+    #[test]
+    fn fit_mag_batch_full_sphere_returns_offset_and_unit_scale() {
+        let centre = [12.0_f32, -30.0, 7.5];
+        let flat = flat_sphere(centre, 48.0, 12);
+        let r = fit_mag_batch(&flat).expect("well-covered sphere should be accepted");
+        for (k, (got, want)) in r[..3].iter().zip(centre.iter()).enumerate() {
+            assert!(
+                (got - want).abs() < 0.5,
+                "offset axis {k}: got {got} want {want}"
+            );
+        }
+        // Wizard is offset-only, so scale is always unity.
+        assert_eq!([r[3], r[4], r[5]], [1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn fit_mag_batch_rejects_thin_band() {
+        // Many samples locked near the equator: high count, low coverage, so the
+        // wizard's coverage gate rejects the fit and the helper returns None.
+        let centre = [0.0_f32; 3];
+        let radius = 40.0_f32;
+        let theta = std::f32::consts::FRAC_PI_2;
+        let mut flat = Vec::new();
+        for i in 0..200 {
+            let phi = 2.0 * std::f32::consts::PI * (i as f32 / 200.0);
+            flat.push(centre[0] + radius * theta.sin() * phi.cos());
+            flat.push(centre[1] + radius * theta.sin() * phi.sin());
+            flat.push(centre[2] + radius * theta.cos());
+        }
+        assert!(fit_mag_batch(&flat).is_none());
     }
 }
