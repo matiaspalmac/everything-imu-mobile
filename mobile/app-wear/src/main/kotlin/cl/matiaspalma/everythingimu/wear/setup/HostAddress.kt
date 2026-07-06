@@ -44,4 +44,20 @@ object HostAddress {
 
     /** Seed the port wheel from a saved port, or the SlimeVR default. */
     fun initialPort(port: Int): Int = if (port in MIN_PORT..MAX_PORT) port else DEFAULT_PORT
+
+    /**
+     * Decide which host string to persist when the picker is saved.
+     *
+     * The wheels can only represent an IPv4 dotted-quad, so a host that is not
+     * one (a hostname or IPv6 pushed from the phone) seeds them with the LAN
+     * fallback. If the user never moved the wheels off that seed, reconstructing
+     * from them would clobber the working host with the fallback. In that case
+     * keep [originalHost] verbatim; otherwise persist the address the wheels now
+     * describe (the user chose to type an IP).
+     */
+    fun resolveHost(originalHost: String, currentOctets: IntArray, initialOctets: IntArray): String {
+        val untouched = currentOctets.contentEquals(initialOctets)
+        if (untouched && parseOctets(originalHost) == null) return originalHost
+        return format(currentOctets)
+    }
 }

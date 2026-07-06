@@ -102,7 +102,9 @@ fun HostPickerScreen(
 
         Button(onClick = {
             val octets = IntArray(4) { octetStates[it].selectedOption }
-            val host = HostAddress.format(octets)
+            // Preserve a pushed hostname/IPv6 if the wheels were never edited —
+            // reconstructing from an untouched fallback seed would lose it.
+            val host = HostAddress.resolveHost(initialHost, octets, seedOctets)
             val port = HostAddress.coercePort(portState.selectedOption + HostAddress.MIN_PORT)
             onSave(host, port)
         }) { Text("Save") }

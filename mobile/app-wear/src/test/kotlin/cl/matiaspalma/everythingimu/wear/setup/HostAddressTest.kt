@@ -68,4 +68,36 @@ class HostAddressTest {
         assertEquals(6969, HostAddress.initialPort(-1))
         assertEquals(9000, HostAddress.initialPort(9000))
     }
+
+    @Test
+    fun resolveHostReconstructsWhenIpv4Edited() {
+        val seed = HostAddress.initialOctets("192.168.1.100")
+        val edited = intArrayOf(10, 0, 0, 5)
+        assertEquals("10.0.0.5", HostAddress.resolveHost("192.168.1.100", edited, seed))
+    }
+
+    @Test
+    fun resolveHostReconstructsWhenIpv4Unchanged() {
+        val seed = HostAddress.initialOctets("10.0.0.5")
+        assertEquals("10.0.0.5", HostAddress.resolveHost("10.0.0.5", seed.copyOf(), seed))
+    }
+
+    @Test
+    fun resolveHostPreservesHostnameWhenUntouched() {
+        val seed = HostAddress.initialOctets("desktop.local")
+        assertEquals("desktop.local", HostAddress.resolveHost("desktop.local", seed.copyOf(), seed))
+    }
+
+    @Test
+    fun resolveHostPreservesIpv6WhenUntouched() {
+        val seed = HostAddress.initialOctets("fe80::1")
+        assertEquals("fe80::1", HostAddress.resolveHost("fe80::1", seed.copyOf(), seed))
+    }
+
+    @Test
+    fun resolveHostReconstructsWhenHostnameEdited() {
+        val seed = HostAddress.initialOctets("myserver.lan")
+        val edited = intArrayOf(192, 168, 1, 50)
+        assertEquals("192.168.1.50", HostAddress.resolveHost("myserver.lan", edited, seed))
+    }
 }
