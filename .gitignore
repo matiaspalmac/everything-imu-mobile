@@ -27,3 +27,7 @@ docs/
 # IDE / OS
 .DS_Store
 Thumbs.db
+
+# Private audit working docs — kept under docs/ (gitignored), never committed
+/DECISIONS.md
+/AUDIT-STATUS.md
