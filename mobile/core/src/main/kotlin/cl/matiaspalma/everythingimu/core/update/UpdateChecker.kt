@@ -7,8 +7,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Queries the GitHub Releases API for the monorepo's latest tag and reports
- * whether it is newer than the running build. Network-only — no install is
+ * Queries the GitHub Releases API for the mobile repository's latest release
+ * tag and reports whether it is newer than the running build. The mobile app
+ * lives in its own repository (`everything-imu-mobile`), separate from the
+ * desktop app, so the update check must target it — not the desktop repo.
+ * Network-only — no install is
  * performed; the caller hands the user an `Intent.ACTION_VIEW` deep-link to
  * the release's HTML page so the OS package installer takes it from there.
  *
@@ -26,11 +29,11 @@ object UpdateChecker {
     )
 
     private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/matiaspalmac/everything-imu/releases/latest"
+        "https://api.github.com/repos/matiaspalmac/everything-imu-mobile/releases/latest"
 
     /** Fallback when the response-supplied `html_url` fails validation. */
     private const val RELEASES_PAGE_URL =
-        "https://github.com/matiaspalmac/everything-imu/releases/latest"
+        "https://github.com/matiaspalmac/everything-imu-mobile/releases/latest"
 
     /**
      * Fetches `releases/latest` and returns a populated [UpdateInfo]. Returns
