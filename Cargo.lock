@@ -274,7 +274,7 @@ checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
 name = "imu-fusion"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "approx",
  "imu-math",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "imu-math"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "approx",
  "nalgebra",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "jni-android"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "imu-fusion",
  "imu-math",
