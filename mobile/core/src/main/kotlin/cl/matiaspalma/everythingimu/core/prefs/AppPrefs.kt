@@ -55,12 +55,12 @@ class AppPrefs(context: Context) {
     val sendRateHz: Flow<Int> = guardedData.map { it[KEY_SEND_RATE] ?: 100 }
     // Default OFF: a raw, uncalibrated magnetometer near a PC/monitor (the
     // typical VR setup) drags VQF's heading and causes yaw drift at rest.
-    // owoTrack and moveTrackVR default mag off for the same reason. Users can
-    // opt in via the toggle after running the figure-8 calibration.
+    // Other phone-based trackers default mag off for the same reason. Users
+    // can opt in via the toggle after running the figure-8 calibration.
     val magEnabled: Flow<Boolean> = guardedData.map { it[KEY_MAG_ENABLED] ?: false }
     val shakeRecenter: Flow<Boolean> = guardedData.map { it[KEY_SHAKE_RECENTER] ?: true }
 
-    // false = on-device VQF (default). true = OS Game Rotation Vector (owoTrack-style).
+    // false = on-device VQF (default). true = OS Game Rotation Vector.
     val useOsRotation: Flow<Boolean> = guardedData.map { it[KEY_OS_ROTATION] ?: false }
 
     // Start the OSC haptic server automatically on connect.
