@@ -32,7 +32,7 @@ class SensorRepository(context: Context) : SensorEventListener {
         Sensor.TYPE_MAGNETIC_FIELD, Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED,
     )
 
-    // The device's own fused orientation (6D, no mag — same basis as owoTrack).
+    // The device's own fused orientation (6D, no mag).
     // Used when the user selects OS fusion instead of the on-device VQF.
     private val rotationVectorSensor: Sensor? =
         sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
@@ -71,8 +71,8 @@ class SensorRepository(context: Context) : SensorEventListener {
     @Volatile var fusionEnabled: Boolean = true
 
     /**
-     * When true, orientation comes from the OS Game Rotation Vector (what
-     * owoTrack uses) instead of the on-device VQF. Some devices — notably
+     * When true, orientation comes from the OS Game Rotation Vector instead
+     * of the on-device VQF. Some devices, notably
      * Galaxy Watches — ship a well-tuned fusion that beats VQF on raw data at
      * the watch's low gyro rate. VQF stays the default (no vendor dead-zones,
      * works everywhere). [rotationVectorAvailable] reports hardware support.
@@ -128,8 +128,8 @@ class SensorRepository(context: Context) : SensorEventListener {
     private var latestAccel: FloatArray? = null
     private var latestMag: FloatArray? = null
 
-    // Linear acceleration (gravity removed) for the owoTrack-compat accel
-    // packet. A slow low-pass tracks gravity; movement is the residual.
+    // Linear acceleration (gravity removed) for the accel packet. A slow
+    // low-pass tracks gravity; movement is the residual.
     private val gravityLp = FloatArray(3)
     private var gravityInit = false
     @Volatile private var linearAccel: FloatArray? = null

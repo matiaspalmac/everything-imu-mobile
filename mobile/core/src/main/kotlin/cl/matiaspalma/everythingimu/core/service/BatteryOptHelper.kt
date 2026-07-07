@@ -14,7 +14,7 @@ import androidx.core.content.getSystemService
  * OnePlus/OxygenOS, Samsung One UI, Huawei EMUI, etc.) aggressively kill
  * background apps even with a foreground service running. Without the user
  * granting "no restrictions" / "ignore optimizations", tracking dies a few
- * minutes after screen-off — exactly the #1 owoTrack complaint.
+ * minutes after screen-off, the most common failure mode for phone trackers.
  */
 object BatteryOptHelper {
 

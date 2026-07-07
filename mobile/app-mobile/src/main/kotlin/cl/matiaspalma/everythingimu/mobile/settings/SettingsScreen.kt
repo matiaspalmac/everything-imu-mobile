@@ -239,7 +239,7 @@ fun SettingsScreen() {
             if (TrackingController.osRotationAvailable) {
                 SwitchRow(
                     label = "Use device rotation",
-                    hint = "Use the OS fused orientation (like owoTrack) instead of built-in VQF. Try it if rotation feels less accurate.",
+                    hint = "Use the Android OS fused orientation instead of the built-in VQF filter. Try it if rotation feels less accurate.",
                     checked = osRotationOn,
                     onChange = { scope.launch { prefs.setUseOsRotation(it) } },
                 )
