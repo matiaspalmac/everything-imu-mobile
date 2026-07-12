@@ -8,6 +8,19 @@
     <img src="https://img.shields.io/badge/platform-Android%20%7C%20Wear%20OS-3DDC84.svg" alt="Platform">
     <a href="https://github.com/matiaspalmac/everything-imu-mobile/releases/latest"><img src="https://img.shields.io/github/v/release/matiaspalmac/everything-imu-mobile?include_prereleases&label=release" alt="Latest release"></a>
   </p>
+
+  <p>
+    <a href="https://eimu.vante.systems"><img src="https://img.shields.io/badge/website-eimu.vante.systems-FF4F0A" alt="Website"></a>
+    <a href="https://discord.gg/stVDVQR9XR"><img src="https://img.shields.io/discord/1525720633034539099?label=Discord&logo=discord&logoColor=white&color=FF4F0A" alt="Discord"></a>
+  </p>
+
+  <p>
+    <a href="https://eimu.vante.systems">Website</a> ·
+    <a href="https://eimu.vante.systems/docs/">Docs</a> ·
+    <a href="https://github.com/matiaspalmac/everything-imu-mobile/releases/latest">Download</a> ·
+    <a href="https://discord.gg/stVDVQR9XR">Discord</a> ·
+    <a href="https://github.com/matiaspalmac/everything-imu">Desktop app</a>
+  </p>
 </div>
 
 No extra hardware. The device's own IMU is streamed to the eimu desktop app
