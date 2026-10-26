@@ -15,7 +15,7 @@ license = "MIT"
 repository = "https://github.com/matiaspalmac/everything-imu-mobile"
 
 [workspace.dependencies]
-nalgebra = "0.34"
+nalgebra = "0.35"
 serde = { version = "1.0", features = ["derive"] }
 approx = "0.5"
 proptest = "1.5"
